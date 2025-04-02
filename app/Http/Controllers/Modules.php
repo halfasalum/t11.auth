@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\modules as ModelsModules;
+use App\Models\Modules as ModelsModules;
 use App\Models\modules_controls;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;

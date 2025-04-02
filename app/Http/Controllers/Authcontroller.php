@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Company;
 use App\Models\role_permissions;
 use App\Models\User;
 use App\Models\users_roles;
@@ -36,12 +37,14 @@ class Authcontroller extends Controller
                     }
                 }
             }
+            $company = Company::where('id',$user->user_company)->first();
             //$token = JWTAuth::fromUser($user, ['controls' => $controls]);
-            $token = JWTAuth::claims(['controls' => $controls,'company' => $user->user_company])->fromUser($user);
+            $token = JWTAuth::claims(['controls' => $controls,'user_id'=>$user->id,'company' => $user->user_company])->fromUser($user);
             return response()->json([
                 'token'     => $token,
                 'name'  => $user->first_name  . " - " . $user->last_name,
-                'company' => $user->user_company,
+                //'company_id' => $user->user_company,
+                'company' => $company->company_name,
                 'success'   => true,
                 'permissions' => $controls
             ]);

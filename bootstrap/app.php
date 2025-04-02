@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
             \App\Http\Middleware\JwtMiddleware::class,
             \App\Http\Middleware\ControlAccessMiddleware::class,
+            \App\Http\Middleware\HandleCors::class,
         ]);
 
         //

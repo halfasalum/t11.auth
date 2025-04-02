@@ -25,6 +25,15 @@ class JwtMiddleware
             JWTAuth::setToken(str_replace('Bearer ', '', $token))->authenticate(); */
             JWTAuth::parseToken()->authenticate();
         } catch (TokenExpiredException $e) {
+            try {
+                // Refresh the token if it has expired
+                $newToken = JWTAuth::refresh(JWTAuth::getToken());
+                // Add the new token to the response headers
+                return response()->json(['message' => 'Token refreshed'])
+                    ->header('Authorization', 'Bearer ' . $newToken);
+            } catch (Exception $refreshException) {
+                return response()->json(['message' => "Token has expired and cannot be refreshed : ".$refreshException->getMessage()], 401);
+            }
             return response()->json(['message' => 'Token has expired'], 401);
         } catch (TokenInvalidException $e) {
             return response()->json(['message' => 'Invalid token'], 401);
@@ -33,6 +42,12 @@ class JwtMiddleware
         } */ catch (Exception $e) {
             return response()->json(['message' => $e->getMessage()], 401);
         }
-        return $next($request);
+        // Proceed with the request if the token is valid
+        $response = $next($request);
+        if (isset($newToken)) {
+            $response->headers->set('Authorization', 'Bearer ' . $newToken);
+        }
+        //return $next($request);
+        return $response;
     }
 }
