@@ -38,11 +38,11 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get("/module-controls/{id}", [Modules::class, "getControls"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/modules", [Modules::class, "getModules"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/controls", [Modules::class, "listControls"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::get("/modulesControls", [Modules::class, "getModulesControls"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::get("/roles/list", [Roles::class, "listRoles"])->middleware([ControlAccessMiddleware::class . ':7']);
+    Route::get("/module/permissions", [Modules::class, "getModulesPermissions"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/roles", [Roles::class, "listRoles"])->middleware([ControlAccessMiddleware::class . ':7']);
     Route::post("/roles/register", [Roles::class, "register"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::post("/roles/registerRolePermissions", [Roles::class, "registerRolePermissions"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::get("/role-permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::post("/role/update", [Roles::class, "updateRolePermission"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get('/users/list', [SystemUsers::class, 'listUsers'])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/roles/user/{id}", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/users/registerUserRoles", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':1']);

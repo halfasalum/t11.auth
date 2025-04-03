@@ -9,5 +9,5 @@ class Roles extends Model
     protected $table = 'roles';
     protected $primaryKey = 'id';
     public $timestamps = true;
-    protected $fillable = ['role_name', 'school', 'status'];
+    protected $fillable = ['role_name', 'company', 'status'];
 }

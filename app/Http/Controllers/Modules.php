@@ -108,7 +108,7 @@ class Modules extends Controller
             $modules
         );
     }
-    public function getModulesControls()
+    public function getModulesPermissions()
     {
         $modulesWithControls = [];
         $modules = ModelsModules::where('module_status', 1)

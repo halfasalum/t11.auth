@@ -37,8 +37,8 @@ class ZoneController extends Controller
     }
 
     public function list() {
-        $branches = Zone::where('status', '!=', 3)
-        ->select('zones.id','zone_name','zones.created_at')
+        $branches = Zone::where('zones.status', '!=', 3)
+        ->select('zones.id','zone_name','branch_name','zones.created_at')
         ->join('branches', 'branches.id', '=', 'zones.branch')
             ->where('branches.status', 1)
         ->get();
