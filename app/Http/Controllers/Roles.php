@@ -105,9 +105,11 @@ class Roles extends Controller
         }
     }
 
-    public function getUserAssignedRoles($user)
+    public function getUserAssignedRoles()
     {
-        $roles = users_roles::where(['user_id' => $user, 'user_role_status' => 1])
+        $user = JWTAuth::parseToken()->getPayload();
+                $user_id = $user->get('user_id');
+        $roles = users_roles::where(['user_id' => $user_id, 'user_role_status' => 1])
             ->select('role_id')
             ->get();
         return response()->json(

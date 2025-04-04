@@ -7,13 +7,17 @@ use App\Models\users_roles;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use Tymon\JWTAuth\Facades\JWTAuth;
 
 class SystemUsers extends Controller
 {
-    public function listUsers()
+    public function list()
     {
-        $users = User::where(['user_type' => 1])
-            ->select('id', 'name', 'email', 'first_name', 'last_name')
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
+        $users = User::where(['user_company' => $user_company])
+            ->select('id', 'name', 'email', 'first_name', 'last_name','status','created_at','phone')
+            ->where("status",'!=' ,3)
             ->get();
         return response()->json(
             $users
@@ -29,15 +33,16 @@ class SystemUsers extends Controller
             $request->validate([
                 'roles' => 'required',
             ]);
-            $user = $request->user;
-            users_roles::where('user_id', $user)
-                ->update(['user_role_status' => 2]);
+            $user = JWTAuth::parseToken()->getPayload();
+                $user_id = $user->get('user_id');
+            users_roles::where('user_id', $user_id)
+                ->update(['user_role_status' => 3]);
             $roles = $request->roles;
             if (sizeof($roles) > 0) {
                 foreach ($roles as $role) {
                     $data = [
                         'role_id' => $role,
-                        'user_id' => $user,
+                        'user_id' => $user_id,
                         'user_role_status' => 1
                     ];
                     users_roles::create($data);
@@ -45,7 +50,7 @@ class SystemUsers extends Controller
             }
             return response()->json([
                 'status' => 'success',
-                'message' => 'Role permissions is successfully updated',
+                'message' => 'User role is successfully updated',
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([

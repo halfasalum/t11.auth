@@ -43,9 +43,9 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::post("/roles/register", [Roles::class, "register"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/role/update", [Roles::class, "updateRolePermission"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::get('/users/list', [SystemUsers::class, 'listUsers'])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::get("/roles/user/{id}", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':1']);
-    Route::post("/users/registerUserRoles", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/roles/user", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::post("/user/role", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/users/school", [SystemUsers::class, "registerSchoolAdmin"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/branches", [Branch::class, "list"])->middleware([ControlAccessMiddleware::class . ':2']);
     Route::post("/branch/register", [Branch::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
