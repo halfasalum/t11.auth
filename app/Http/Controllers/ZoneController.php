@@ -46,4 +46,17 @@ class ZoneController extends Controller
             $branches
         );
     }
+
+    public function getUserAssignedZones() {
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
+        $user_id = $user->get('user_id');
+        $zones = Zone::where(['zone_users.user_id' => $user_id, 'zones.status' => 1])
+            ->select('zones.id','zone_name')
+            ->join('zone_users', 'zone_users.zone_id', '=', 'zones.id')
+            ->get();
+        return response()->json(
+            $zones
+        );
+    }
 }

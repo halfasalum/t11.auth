@@ -51,6 +51,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
     Route::get("/branches", [Branch::class, "list"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/branch/register", [Branch::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
     Route::get("/zones", [ZoneController::class, "list"])->middleware([ControlAccessMiddleware::class . ':2']);
-    Route::post("/zone/register", [ZoneController::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::get("/user/zones", [ZoneController::class, "getUserAssignedZones"])->middleware([ControlAccessMiddleware::class . ':12']);
+    Route::post("/zone/register", [ZoneController::class, "register"])->middleware([ControlAccessMiddleware::class . ':12']);
     
 });
