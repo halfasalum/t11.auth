@@ -5,11 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
-class Roles extends Model
+class ZoneUser extends Model
 {
     use HasFactory;
-    protected $table = 'roles';
+    protected $table = 'zone_users';
     protected $primaryKey = 'id';
     public $timestamps = true;
-    protected $fillable = ['role_name', 'company', 'status'];
+    protected $fillable = ['zone_id', 'user_id', 'status'];
 }

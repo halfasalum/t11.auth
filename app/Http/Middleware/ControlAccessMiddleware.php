@@ -16,7 +16,7 @@ class ControlAccessMiddleware
      */
     public function handle(Request $request, Closure $next, int $requiredControl): Response
     {
-        /* try {
+         try {
             $user = JWTAuth::parseToken()->getPayload();
             $controls = $user->get('controls', []); // Default to an empty array if null
 
@@ -29,7 +29,7 @@ class ControlAccessMiddleware
             }
         } catch (\Exception $e) {
             return response()->json(['message' => 'Token error: ' . $e->getMessage()], 403);
-        } */
+        } 
 
         return $next($request);
     }
