@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Exception;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
+use Illuminate\Support\Facades\Log;
 
 class Authcontroller extends Controller
 {
@@ -68,7 +69,7 @@ class Authcontroller extends Controller
             }
             $company = Company::where('id',$user->user_company)->first();
             //$token = JWTAuth::fromUser($user, ['controls' => $controls]);
-            $token = JWTAuth::claims(['controls' => $controls,'user_id'=>$user->id,'company' => $user->user_company,'branches'=>$branches,'zones'=>$zones,'branchesId'=>$branchesId,'zonesId'=>$zonesId])->fromUser($user);
+            $token = JWTAuth::claims(['controls' => $controls,'user_id'=>$user->id,'company' => $user->user_company,'branches'=>$branches,'zones'=>$zones,'branchesId'=>$branchesId,'zonesId'=>$zonesId])->fromUser($user); 
             return response()->json([
                 'token'     => $token,
                 'name'  => $user->first_name  . " - " . $user->last_name,
@@ -77,8 +78,8 @@ class Authcontroller extends Controller
                 'permissions' => $controls,
                 'branches' => $branches,
                 'zones' => $zones,
-                //'branchesId' => $branchesId,
-                //'zonesId' => $zonesId,
+                'branchesId' => $branchesId,
+                'zonesId' => $zonesId,
                 'message' => 'Login successful',
             ]);
         } else {
