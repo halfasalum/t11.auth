@@ -10,7 +10,7 @@ class HandleCors
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $allowedOrigins = ['https://app.flux.co.tz', 'http://app.flux.co.tz'];
+        $allowedOrigins = ['https://app.flux.co.tz', 'http://app.flux.co.tz','app.flux.co.tz'];
         $origin = $request->headers->get('Origin');
 
         // Handle preflight request
@@ -24,7 +24,7 @@ class HandleCors
         return $this->addCorsHeaders($response, $origin, $allowedOrigins);
     }
 
-    private function addCorsHeaders(Response $response, ?string $origin, array $allowedOrigins): Response
+   /*  private function addCorsHeaders(Response $response, ?string $origin, array $allowedOrigins): Response
     {
         if ($origin && in_array($origin, $allowedOrigins)) {
             $response->headers->set('Access-Control-Allow-Origin', $origin);
@@ -35,5 +35,19 @@ class HandleCors
         //$response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
 
         return $response;
+    } */
+
+    private function addCorsHeaders(Response $response, ?string $origin, array $allowedOrigins): Response
+{
+    if ($origin && in_array($origin, $allowedOrigins)) {
+        $response->headers->set('Access-Control-Allow-Origin', $origin);
+        $response->headers->set('Access-Control-Allow-Credentials', 'true');
     }
+
+    $response->headers->set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    $response->headers->set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
+
+
+    return $response;
+}
 }

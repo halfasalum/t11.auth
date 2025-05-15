@@ -37,7 +37,10 @@ class Branch extends Controller
     }
 
     public function list() {
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
         $branches = BranchModel::where('status', '!=', 3)
+        ->where('company',$user_company)
         ->select('id','branch_name','balance','created_at')
         ->get();
         return response()->json(

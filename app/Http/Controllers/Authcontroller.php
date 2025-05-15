@@ -8,6 +8,7 @@ use App\Models\role_permissions;
 use App\Models\User;
 use App\Models\users_roles;
 use App\Models\ZoneUser;
+use App\Services\UserLogService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -18,7 +19,7 @@ use Illuminate\Support\Facades\Log;
 
 class Authcontroller extends Controller
 {
-    public function login(Request $request)
+    public function login(Request $request, UserLogService $userLogService)
     {
         $username = $request->username;
         $password = $request->password;
@@ -69,7 +70,8 @@ class Authcontroller extends Controller
             }
             $company = Company::where('id',$user->user_company)->first();
             //$token = JWTAuth::fromUser($user, ['controls' => $controls]);
-            $token = JWTAuth::claims(['controls' => $controls,'user_id'=>$user->id,'company' => $user->user_company,'branches'=>$branches,'zones'=>$zones,'branchesId'=>$branchesId,'zonesId'=>$zonesId])->fromUser($user); 
+            $token = JWTAuth::claims(['controls' => $controls,'user_id'=>$user->id,'company' => $user->user_company,'branches'=>$branches,'zones'=>$zones,'branchesId'=>$branchesId,'zonesId'=>$zonesId,'company_phone'=>$company->company_phone,"company_name"=>$company->company_name])->fromUser($user); 
+            $userLogService->log('login',null,$user->id,$user->user_company);
             return response()->json([
                 'token'     => $token,
                 'name'  => $user->first_name  . " - " . $user->last_name,
@@ -122,13 +124,14 @@ class Authcontroller extends Controller
         }
     }
 
-    public function logout()
+    public function logout(UserLogService $userLogService)
     {
         try {
             // Invalidate the token
             $token = JWTAuth::getToken();
             if ($token) {
                 try {
+                    $userLogService->log('logout');
                     JWTAuth::invalidate($token);
                 } catch (TokenExpiredException $e) {
                     // Token is already expired, consider it a successful logout

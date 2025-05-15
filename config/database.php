@@ -61,7 +61,22 @@ return [
                 PDO::MYSQL_ATTR_SSL_CA => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
-
+        'loan_db' => [
+            'driver' => 'mysql',
+            'host' => env('LOAN_DB_HOST', '127.0.0.1'),
+            'database' => env('LOAN_DB_DATABASE', 'auth_db'),
+            'username' => env('LOAN_DB_USERNAME', 'root'),
+            'password' => env('LOAN_DB_PASSWORD', ''),
+            'port' => env('LOAN_DB_PORT', '3306'),
+        ],
+        'customers_db' => [
+            'driver' => 'mysql',
+            'host' => env('CUSTOMERS_DB_HOST', '127.0.0.1'),
+            'database' => env('CUSTOMERS_DB_DATABASE', 'auth_db'),
+            'username' => env('CUSTOMERS_DB_USERNAME', 'root'),
+            'password' => env('CUSTOMERS_DB_PASSWORD', ''),
+            'port' => env('CUSTOMERS_DB_PORT', '3306'),
+        ],
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

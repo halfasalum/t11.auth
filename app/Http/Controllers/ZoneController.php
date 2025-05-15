@@ -37,7 +37,10 @@ class ZoneController extends Controller
     }
 
     public function list() {
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
         $branches = Zone::where('zones.status', '!=', 3)
+        ->where('zones.company',$user_company)
         ->select('zones.id','zone_name','branch_name','zones.created_at')
         ->join('branches', 'branches.id', '=', 'zones.branch')
             ->where('branches.status', 1)
@@ -51,7 +54,7 @@ class ZoneController extends Controller
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $user_id = $user->get('user_id');
-        $zones = Zone::where(['zone_users.user_id' => $user_id, 'zones.status' => 1])
+        $zones = Zone::where(['zone_users.user_id' => $user_id, 'zone_users.status' => 1])
             ->select('zones.id','zone_name')
             ->join('zone_users', 'zone_users.zone_id', '=', 'zones.id')
             ->get();

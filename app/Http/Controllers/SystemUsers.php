@@ -119,7 +119,7 @@ class SystemUsers extends Controller
                 $name = $username;
             }
             //$validated['name'] = strtolower($validated['first_name'] . '.' . $validated['last_name']);
-            $password = Str::random(8);
+            $password = mt_rand(10000000, 99999999);
             $validated['password'] = Hash::make($password);
             $created_user = User::create($validated);
             $user_id = $created_user->id;
@@ -166,6 +166,65 @@ class SystemUsers extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'User created successfully',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    public function userAllocation($user_id = null){
+        $branches   = [];
+        $zones      = [];
+        $branches = BranchUser::where(["user_id"=>$user_id, "status"=>1])
+        ->select("branch_id")
+        ->get();
+        //$branches = $branches->pluck('branch_id');
+        $zones = ZoneUser::where(["user_id"=>$user_id, "status"=>1])
+        ->select("zone_id")
+        ->get();
+        return ['branches'=>$branches, 'zones'=>$zones];
+    }
+
+    public function updateUserAllocations(Request $request)
+    {
+
+        try {
+            $request->validate([
+                'user_id' => 'required',
+            ]);
+            $user_id = $request->user_id;
+            BranchUser::where('user_id', $user_id)
+                ->update(['status' => 2]);
+            ZoneUser::where('user_id', $user_id)
+                ->update(['status' => 2]);
+            $branches = $request->branches;
+            if (sizeof($branches) > 0) {
+                foreach ($branches as $branch) {
+                    $data = [
+                        'branch_id' => $branch,
+                        'user_id' => $user_id,
+                        'status' => 1
+                    ];
+                    BranchUser::create($data);
+                }
+            }
+            $zones = $request->zones;
+            if (sizeof($zones) > 0) {
+                foreach ($zones as $zone) {
+                    $data = [
+                        'zone_id' => $zone,
+                        'user_id' => $user_id,
+                        'status' => 1
+                    ];
+                    ZoneUser::create($data);
+                }
+            }
+            return response()->json([
+                'status' => 'success',
+                'message' => 'User role is successfully updated',
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([

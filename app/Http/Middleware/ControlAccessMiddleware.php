@@ -28,7 +28,7 @@ class ControlAccessMiddleware
                 return response()->json(['message' => 'Access denied. Insufficient permissions.'], 403);
             }
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Token error: ' . $e->getMessage()], 403);
+            return response()->json(['message' => 'Token error: ' . $e->getMessage()], 401);
         } 
 
         return $next($request);
