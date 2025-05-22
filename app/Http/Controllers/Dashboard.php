@@ -8,8 +8,10 @@ use App\Models\LoanPaymentSchedules;
 use App\Models\Loans;
 use App\Models\PaymentSubmissions;
 use App\Models\Zone;
+use App\Models\Customers;
 use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use Carbon\Carbon;
 
 class Dashboard extends Controller
 {
@@ -47,7 +49,7 @@ class Dashboard extends Controller
         $user_branch = $user->get('branchesId');
         $customersData = $this->customers($user_zones, $user_branch);
         $loansData = $this->loans($user_zones, $user_branch);
-        $trends    = $this->collectionTrend($user_zones,$user_branch);
+        $trends    = $this->collectionTrend($user_zones, $user_branch);
         $todayGoal    = $this->todayTarget($user_zones);
         $stats      = [
             'all_customers' => $customersData['all_customers'],
@@ -72,9 +74,10 @@ class Dashboard extends Controller
         $user_branch = $user->get('branchesId');
         $customersData = $this->customers();
         $loansData = $this->loans($user_zones, $user_branch);
-        $trends    = $this->collectionTrend($user_zones,$user_branch);
+        $trends    = $this->collectionTrend($user_zones, $user_branch);
         $todayGoal    = $this->todayTarget($user_zones);
         $finace_kpi = $this->finace_kpi();
+        $operational_kpi = $this->operational_kpi();
         $stats      = [
             'all_customers' => $customersData['all_customers'],
             'active_customers' => $customersData['active_customers'],
@@ -84,6 +87,8 @@ class Dashboard extends Controller
             'today_collected' => number_format($todayGoal['collected']),
             'total_loan_portfolio_value' => number_format($finace_kpi['total_loan_portfolio_value']),
             'average_loan_amount' => number_format($finace_kpi['average_loan_amount']),
+            'collection_efficiency' => $finace_kpi['collection_efficiency'],
+            'approval_rate' => $operational_kpi['approval_rate']
         ];
 
         return response()->json([
@@ -92,21 +97,77 @@ class Dashboard extends Controller
         ]);
     }
 
-    public function finace_kpi(){
+    public function finace_kpi()
+    {
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $user_id = $user->get('user_id');
         $user_zones = $user->get('zonesId');
         $user_branch = $user->get('branchesId');
         $total_loan_portfolio_value = Loans::where('company', $user_company)
-        ->where('status', 5)
-        ->selectRaw('SUM(principal_amount - principal_paid) as total')
-        ->value('total');
+            ->where('status', 5)
+            ->selectRaw('SUM(principal_amount - principal_paid) as total')
+            ->value('total');
         $loans = Loans::where('company', $user_company)
-        ->where('status', 5)
-        ->get();
+            ->where('status', 5)
+            ->get();
         $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
-        return ['total_loan_portfolio_value' => $total_loan_portfolio_value, 'average_loan_amount' => $average_loan_amount];
+
+        // Define constants for statuses (replace 11 with a meaningful constant)
+
+
+        // Get current date (consider timezone configuration in Laravel)
+        $currentDate = Carbon::today()->toDateString();
+
+        // Count due payments
+        $duePaymentsCount = LoanPaymentSchedules::where('company', $user_company)
+            ->where('payment_due_date', '<=', $currentDate)
+            ->count();
+
+        // Count received payments
+        $receivedPaymentsCount = PaymentSubmissions::where('payment_submissions.company', $user_company)
+            ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+            ->where('payment_due_date', '<=', $currentDate)
+            ->where('submission_status', 11)
+            ->count();
+
+        // Calculate collections efficiency
+        $collectionsEfficiency = 0;
+        if ($duePaymentsCount > 0) {
+            $collectionsEfficiency = ($receivedPaymentsCount / $duePaymentsCount) * 100;
+            // Round to 2 decimal places for readability
+            $collectionsEfficiency = round($collectionsEfficiency, 2);
+        }
+        return ['total_loan_portfolio_value' => $total_loan_portfolio_value, 'average_loan_amount' => $average_loan_amount, 'collection_efficiency' => $collectionsEfficiency];
+    }
+
+    private const STATUS_APPROVED = [5, 6]; // Approved statuses
+    private const STATUS_EXCLUDED = [3];
+    public function operational_kpi()
+    {
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
+
+        // Use a single query to get both counts
+        $stats = Loans::where('company', $user_company)
+            ->selectRaw('
+            COUNT(*) as total_loans,
+            SUM(CASE WHEN status IN (' . implode(',', self::STATUS_APPROVED) . ') THEN 1 ELSE 0 END) as approved_loans
+        ')
+            ->whereNotIn('status', self::STATUS_EXCLUDED)
+            ->first();
+
+        // Initialize approval rate
+        $approval_rate = 0;
+
+        // Calculate approval rate if total_loans is not zero
+        if ($stats->total_loans > 0) {
+            $approval_rate = ($stats->approved_loans / $stats->total_loans) * 100;
+            // Round to 2 decimal places for readability
+            $approval_rate = round($approval_rate, 2);
+        }
+
+        return ['approval_rate' => $approval_rate];
     }
 
     public function customers($zones = [], $branches = [])
@@ -117,13 +178,17 @@ class Dashboard extends Controller
         $active = 0;
         $controls = $user->get('controls');
         if (in_array(21, $controls)) {
-            $customersCount = CustomersZone::where('company_id', $user_company)
-                ->whereNotIn('status', [3, 9])
-                ->selectRaw('status, COUNT(*) as count')
-                ->groupBy('status')
-                ->pluck('count', 'status');
-            $all = $customersCount->sum();
+            $customersCount = Customers::where('company_id', $user_company)
+                ->join('customers_zones', 'customers_zones.customer_id', '=', 'customers.id')
+                ->whereIn('customers_zones.status', [1, 2, 4])
+                //->selectRaw('status, COUNT(*) as count')
+                //->groupBy('status')
+                //->pluck('count', 'status');
+                ->distinct('customer_id')
+                ->count('customer_id');
+            $all = $customersCount;
             $activeCustomersCount = Loans::where('company', $user_company)
+
                 ->where('status', 5)
                 ->distinct('customer')
                 ->count('customer');
@@ -180,7 +245,7 @@ class Dashboard extends Controller
                 ->selectRaw('status, COUNT(*) as count')
                 ->groupBy('status')
                 ->pluck('count', 'status');
-
+                $completed = $loanCounts[6] ?? 0;
             $active = $loanCounts[5] ?? 0;
         } elseif (in_array(20, $controls)) {
             if (!empty($branches)) {
@@ -326,16 +391,16 @@ class Dashboard extends Controller
         $today = date("Y-m-d");
 
         // Get today's target
-        $target = LoanPaymentSchedules::where(['payment_due_date'=>$today,'company'=>$user_company])
+        $target = LoanPaymentSchedules::where(['payment_due_date' => $today, 'company' => $user_company])
             ->when(!empty($zones), function ($query) use ($zones) {
                 $query->whereIn('zone', $zones);
             })
             ->sum('payment_total_amount');
 
         // Get today's collected amount
-        $collected = PaymentSubmissions::where(['payment_due_date'=>$today,'payment_submissions.company'=>$user_company])
-        ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
-        ->whereIn('payment_submissions.submission_status', [4,8,11])
+        $collected = PaymentSubmissions::where(['payment_due_date' => $today, 'payment_submissions.company' => $user_company])
+            ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+            ->whereIn('payment_submissions.submission_status', [4, 8, 11])
             ->when(!empty($zones), function ($query) use ($zones) {
                 $query->whereIn('payment_submissions.zone', $zones);
             })
