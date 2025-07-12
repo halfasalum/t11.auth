@@ -77,6 +77,14 @@ return [
             'password' => env('CUSTOMERS_DB_PASSWORD', ''),
             'port' => env('CUSTOMERS_DB_PORT', '3306'),
         ],
+        'expense_db' => [
+            'driver' => 'mysql',
+            'host' => env('EXPENSE_DB_HOST', '127.0.0.1'),
+            'database' => env('EXPENSE_DB_DATABASE', 'auth_db'),
+            'username' => env('EXPENSE_DB_USERNAME', 'root'),
+            'password' => env('EXPENSE_DB_PASSWORD', ''),
+            'port' => env('EXPENSE_DB_PORT', '3306'),
+        ],
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),

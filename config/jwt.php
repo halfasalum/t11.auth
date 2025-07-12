@@ -101,7 +101,7 @@ return [
     |
     */
 
-    'ttl' => env('JWT_TTL', 60),
+    'ttl' => (int) env('JWT_TTL', 60),
 
     /*
     |--------------------------------------------------------------------------
@@ -151,6 +151,18 @@ return [
         'nbf',
         'sub',
         'jti',
+        'controls',
+        'user_id',
+        'company',
+        'branches',
+        'zones',
+        'branchesId',
+        'zonesId',
+        'company_phone',
+        'company_name',
+        'f_start_date',
+        'f_end_date',
+        'name',
     ],
 
     /*
@@ -232,7 +244,7 @@ return [
     |
     */
 
-    'blacklist_grace_period' => env('JWT_BLACKLIST_GRACE_PERIOD', 0),
+    'blacklist_grace_period' => env('JWT_BLACKLIST_GRACE_PERIOD', 5),
 
     /*
     |--------------------------------------------------------------------------

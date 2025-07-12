@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BranchModel;
 use App\Models\CustomersZone;
 use App\Models\LoanPayments;
 use App\Models\LoanPaymentSchedules;
@@ -9,9 +10,12 @@ use App\Models\Loans;
 use App\Models\PaymentSubmissions;
 use App\Models\Zone;
 use App\Models\Customers;
+use App\Models\Expenses;
+use App\Models\LoanSchedules;
 use Illuminate\Http\Request;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class Dashboard extends Controller
 {
@@ -78,17 +82,25 @@ class Dashboard extends Controller
         $todayGoal    = $this->todayTarget($user_zones);
         $finace_kpi = $this->finace_kpi();
         $operational_kpi = $this->operational_kpi();
+        $profit_loss    = $this->generateCompanyProfitLossReport();
+        $funds          = BranchModel::where('company', $user_company)
+            ->where('status', '!=', 3)
+            ->select('id', 'branch_name', 'balance')
+            ->get();
         $stats      = [
             'all_customers' => $customersData['all_customers'],
             'active_customers' => $customersData['active_customers'],
             'active_loans' => $loansData['active_loans'],
             'completed_loans' => $loansData['completed_loans'],
-            'today_target' => number_format($todayGoal['target']),
-            'today_collected' => number_format($todayGoal['collected']),
-            'total_loan_portfolio_value' => number_format($finace_kpi['total_loan_portfolio_value']),
-            'average_loan_amount' => number_format($finace_kpi['average_loan_amount']),
+            'today_target' => ($todayGoal['target']),
+            'today_collected' => ($todayGoal['collected']),
+            'total_loan_portfolio_value' => ($finace_kpi['total_loan_portfolio_value']),
+            'average_loan_amount' => ($finace_kpi['average_loan_amount']),
             'collection_efficiency' => $finace_kpi['collection_efficiency'],
-            'approval_rate' => $operational_kpi['approval_rate']
+            'approval_rate' => $operational_kpi['approval_rate'],
+            'income' => $profit_loss['totalPaidInterest'],
+            'expense' => $profit_loss['expense'],
+            'funds' => $funds
         ];
 
         return response()->json([
@@ -104,6 +116,7 @@ class Dashboard extends Controller
         $user_id = $user->get('user_id');
         $user_zones = $user->get('zonesId');
         $user_branch = $user->get('branchesId');
+        $average_loan_amount = 0;
         $total_loan_portfolio_value = Loans::where('company', $user_company)
             ->where('status', 5)
             ->selectRaw('SUM(principal_amount - principal_paid) as total')
@@ -111,7 +124,13 @@ class Dashboard extends Controller
         $loans = Loans::where('company', $user_company)
             ->where('status', 5)
             ->get();
-        $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
+
+            if(sizeof($loans) <= 0){
+                $total_loan_portfolio_value = 0;
+            }else{
+                $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
+            }
+        
 
         // Define constants for statuses (replace 11 with a meaningful constant)
 
@@ -168,6 +187,82 @@ class Dashboard extends Controller
         }
 
         return ['approval_rate' => $approval_rate];
+    }
+
+    public function generateCompanyProfitLossReport()
+    {
+        // Extract user details from JWT
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_zones = $user->get('zonesId') ?? [];
+        $user_branches = $user->get('branchesId') ?? [];
+        $user_company = $user->get('company');
+        $user_id = $user->get('user_id');
+        $f_start_date = $user->get('f_start_date');
+        $f_end_date = $user->get('f_end_date');
+        try {
+            $start_date =  $f_start_date;
+            $end_date =  $f_end_date;
+            $expenses = Expenses::where('company_id', $user_company)
+                ->where('expense_date', '>=', $start_date)
+                ->where('expense_date', '<=', $end_date)
+                ->get();
+            $totalExpesne = $expenses->sum('amount');
+            $data = [];
+            $loans = Loans::where(['company' => $user_company])
+                ->whereIn('status', [5, 6, 7, 12])
+                ->where('start_date', '>=', $start_date)
+                ->where('start_date', '<=', $end_date)
+                ->get();
+            $totalLoanPrincipal = 0;
+            $totalLoanInterest  = 0;
+            $totalPaidPrincipal = 0;
+            $totalPaidInterest  = 0;
+            $totalLoanPenalty  = 0;
+            if (sizeof($loans) > 0) {
+                foreach ($loans as $loan) {
+                    $totalLoanPrincipal += $loan->principal_amount;
+                    $totalLoanInterest  += $loan->interest_amount;
+                    $totalLoanPenalty   += $loan->penalty_amount;
+                    $payaments = LoanSchedules::where('loan_payment_schedule.loan_number', $loan->loan_number)
+                        ->join('payment_submissions', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                        ->where('submission_status', 11)
+                        ->where('loan_payment_schedule.status', 1)
+                        ->where('payment_due_date', '>=', $start_date)
+                        ->where('payment_due_date', '<=', $end_date)
+                        ->where('loan_payment_schedule.company', $user_company)
+                        ->get();
+                    if (sizeof($payaments) > 0) {
+                        foreach ($payaments as $payament) {
+                            $totalPaidPrincipal += $payament->paid_principal;
+                            $totalPaidInterest  += $payament->paid_interest;
+                        }
+                    }
+                }
+            }
+            $data = [
+                'totalLoans'            => $loans->count(),
+                'totalLoanPrincipal'    => $totalLoanPrincipal,
+                'totalLoanInterest'     => $totalLoanInterest,
+                'totalPaidPrincipal'    => $totalPaidPrincipal,
+                'totalPaidInterest'     => $totalPaidInterest,
+                'expense'               => $totalExpesne,
+                'totalLoanPenalty'      => $totalLoanPenalty,
+                'netProfit'             => $totalPaidInterest - $totalExpesne,
+                'percentage_principal_returned' => $totalLoanPrincipal <= 0 ? 0 : number_format(($totalPaidPrincipal / $totalLoanPrincipal) * 100, 2) . '%',
+                'percentage_interest_returned' => $totalLoanInterest <= 0 ? : number_format(($totalPaidInterest / $totalLoanInterest) * 100, 2) . '%'
+            ];
+
+
+
+            // Step 7: Handle output
+           
+                return $data;
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
     }
 
     public function customers($zones = [], $branches = [])

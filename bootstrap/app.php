@@ -19,6 +19,8 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\JwtMiddleware::class,
             \App\Http\Middleware\ControlAccessMiddleware::class,
             \App\Http\Middleware\HandleCors::class,
+            \App\Http\Middleware\CheckSubscriptionLimits::class,
+            \App\Http\Middleware\CheckSubscriptionStatus::class,
         ]);
 
         //

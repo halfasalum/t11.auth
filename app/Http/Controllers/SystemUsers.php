@@ -19,7 +19,7 @@ class SystemUsers extends Controller
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $users = User::where(['user_company' => $user_company])
-            ->select('id', 'name', 'email', 'first_name', 'last_name', 'status', 'created_at', 'phone')
+            ->select('id', 'name', 'email', 'first_name', 'last_name', 'status', 'created_at', 'phone','user_phone')
             ->where("status", '!=', 3)
             ->get();
         return response()->json(
@@ -225,6 +225,83 @@ class SystemUsers extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'User role is successfully updated',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    public function getUserDetails($userId){
+        $user = User::where('id', $userId)
+            ->select('id', 'name', 'email', 'first_name', 'middle_name', 'last_name', 'status', 'created_at', 'user_phone')
+            ->first();
+        if (!$user) {
+            return response()->json(['message' => 'User not found'], 404);
+        }
+       
+        return response()->json(
+            $user
+        );
+    }
+
+    public function updateUserPassword(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'user' => 'required',
+                'password' => 'required|min:6',
+                'rePassword' => 'required|min:6|same:password',
+            ]);
+            $user = User::find($request->user);
+            if (!$user) {
+                return response()->json(['message' => 'User not found'], 404);
+            }
+            $user->password = Hash::make($validated['password']);
+            $user->save();
+            if ($user->wasChanged('password')) {
+                // Optionally, you can send a notification or log the password change
+            } else {
+                return response()->json(['message' => 'Password update failed'], 422);
+            }
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Password updated successfully',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    public function updateUserDetails(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'user' => 'required',
+                'first_name' => 'bail|required|string|max:255',
+                'middle_name' => 'nullable|string|max:255',
+                'last_name' => 'required|string|max:255',
+                'phone' => 'required|numeric|starts_with:06,07|digits:10|unique:App\Models\User,user_phone,' . $request->user,
+                'email' => 'email|unique:App\Models\User,email,' . $request->user,
+                'status' => 'required|in:1,2,3', // Assuming 1=active, 2=inactive, 3=deleted
+            ]);
+            $user = User::find($request->user);
+            if (!$user) {
+                return response()->json(['message' => 'User not found'], 404);
+            }
+            $submittedPhone = $request->phone;
+            $phone = '255' . substr($request->phone, 1);
+            $validated['phone'] = $phone;
+            $validated['user_phone'] = $request->phone;
+            $user->update($validated);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'User details updated successfully',
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([
