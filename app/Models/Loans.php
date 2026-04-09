@@ -16,6 +16,7 @@ class Loans extends Model
     public const STATUS_COMPLETED = 6;
     public const STATUS_DEFAULTED = 7;
     public const STATUS_OVERDUE = 12;
+    public const STATUS_REJECTED = 9;
 
     protected $table = 'loans';
     protected $primaryKey = 'id';
@@ -96,7 +97,7 @@ class Loans extends Model
         return $this->belongsTo(Zone::class, 'zone', 'id');
     }
 
-     /**
+    /**
      * Get the branch through the zone (nested relationship)
      */
     public function loan_branch()

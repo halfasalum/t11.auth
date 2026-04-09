@@ -1192,8 +1192,8 @@ class LoanController extends BaseController
     private function calculateSummary(array $installments, float $totalLoanAmount): array
     {
         $totalAmount = array_sum(array_column($installments, 'amount'));
-        $totalPrincipal = array_sum(array_column($installments, 'amount'));
-        $totalInterest = array_sum(array_column($installments, 'amount'));
+        $totalPrincipal = array_sum(array_column($installments, 'principal'));
+        $totalInterest = array_sum(array_column($installments, 'interest'));
 
         return [
             'total_to_pay' => round($totalAmount, 2),
@@ -1570,8 +1570,8 @@ class LoanController extends BaseController
             // Update loan with rejection details
             $loan->remarks = $request->remarks;
             $loan->status = 9; // Rejected status
-            $loan->rejected_by = $user_id;
-            $loan->rejected_at = now();
+            //$loan->rejected_by = $user_id;
+            //$loan->rejected_at = now();
             $loan->save();
 
             // Log the rejection
