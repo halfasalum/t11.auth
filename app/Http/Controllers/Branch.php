@@ -62,10 +62,13 @@ class Branch extends Controller
             ->first();
         $funds = FundsAllocation::where('branch', $branchId)
             ->get();
+            $bank = new BankController();
+            $accounts = $bank->listActiveAccounts();
         return response()->json(
             [
                 'details'   => $branch,
-                'funds'     => $funds
+                'funds'     => $funds,
+                'accounts'  => $accounts
             ]
         );
     }
@@ -109,6 +112,7 @@ class Branch extends Controller
             $validated = $request->validate([
                 'branch_id' => 'bail|required|integer|exists:App\Models\BranchModel,id',
                 'fund' => 'bail|required|numeric',
+                'paid_account' => 'bail|required|integer'
             ]);
             $user = JWTAuth::parseToken()->getPayload();
             $user_company = $user->get('company');
@@ -134,6 +138,20 @@ class Branch extends Controller
                 'allocated_by' => $user_id,
                 'company' => $user_company,
             ]);
+
+            $bank = new BankController();
+            $bank->registerTransaction(
+                $validated['paid_account'],
+                $validated['fund'],
+                false,
+                date('Y-m-d'),
+                false,
+                $validated['branch_id'],
+                null,
+                null,
+                null,
+                null
+            );
             return response()->json([
                 'status' => 'success',
                 'message' => 'Branch fund update successfully',

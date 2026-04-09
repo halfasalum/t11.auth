@@ -12,4 +12,12 @@ class Zone extends Model
     protected $primaryKey = 'id';
     public $timestamps = true;
     protected $fillable = ['zone_name', 'branch', 'registered_by', 'company','status'];
+
+     /**
+     * Get the branch that this zone belongs to
+     */
+    public function branch()
+    {
+        return $this->belongsTo(BranchModel::class, 'branch', 'id');
+    }
 }

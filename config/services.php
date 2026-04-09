@@ -41,13 +41,18 @@ return [
         'client_secret' => env('PAYMENT_GATEWAY_CLIENT_SECRET', 'LrKAIrFHZHvpCrtgNCLQ0XyTZpfz47ueaommxKzk0hzt8qAOuCuIiQhAqocUyhWSYLpBpOqb0nJ+jXHEBg+tU+0nbLAdrf92TOQw5zEoEL91h7fXam0rwefTBWSC4E4yKIPWHbTogSqh1O3sl/pCOvKOEFgJWCKHHsHFDPyYKtbQ6P7C6QOABVmw3HJHfhlMMWsgFPEq/CO6NKsTgqlpwFGRVSfSm7zGFK3Uetg5RncA1oLzBxr4ymhYDpwmF9tEY+CQJjxZY53EY1JnEl8Zn0nXdKKUopWcCVTbX6A2wXjgVo5BrIJRBBS3ONMYraRyGqkmBEiEtZaz/2Yyn0Bx1ldKHbZU5U7E6iZhpD5R5bOrGktt1ZORTeRSz1mDICjDnqm7vLx6YrMb2IfSvEWmw8Jtx2EMpIZtOCQI+P3sdnavm6TFpE44PyCNaWhLCIRGT0cqgWe1SP6nrnwgTF+iSG7QRmtcvy8leBJjnZ2KCKDfmEerL67HbwEBumgVUMO6PRmmgaKefvDEAiXZxZTl7vHmMk2Cb6Wx7CtjMd7CfSAkDM8RSHBJwStCZMOp0UscRpZiyMi2t/kIgxW+mzbD7FCNzJd/QrfjHMFtPu3GrOjRw9XjaWas55vTljbprJwHECxZqMhyia6TtZNpOOJpuL9PFsEZ2KTFbWUe+6iuj70='),
         'client_token' => env('PAYMENT_GATEWAY_CLIENT_TOKEN', '3b9d9d5e-0dca-45ff-8ecd-747c09e5c94c'),
     ],
-   'airtel_money' => [
+    'airtel_money' => [
         'base_url' => env('AIRTEL_MONEY_BASE_URL', 'https://openapiuat.airtel.africa'),
         'client_id' => env('AIRTEL_MONEY_CLIENT_ID'),
         'client_secret' => env('AIRTEL_MONEY_CLIENT_SECRET'),
         'x_key' => env('AIRTEL_MONEY_X_KEY'),
         'x_signature' => env('AIRTEL_MONEY_X_SIGNATURE'),
         'public_key' => env('AIRTEL_MONEY_PUBLIC_KEY'),
+    ],
+    'beem' => [
+        'api_key' => env('BEEM_API_KEY', 'cd265ba2a9711dd6'),
+        'secret_key' => env('BEEM_SECRET_KEY', 'MzA2ZjNiMDBjNjgwOTQ0Njc2ZjU0MmE5YmU1YzNkZGIwOTcwNzQ5ZWMwY2Q0OWVmM2QyZjI0NmJkNzlhY2VmZg=='),
+        'source_addr' => env('BEEM_SOURCE_ADDR', 'TerminalXI'),
     ],
 
 ];

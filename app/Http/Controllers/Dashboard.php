@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Accounts;
 use App\Models\BranchModel;
 use App\Models\CustomersZone;
 use App\Models\LoanPayments;
@@ -35,8 +36,8 @@ class Dashboard extends Controller
             'active_customers' => $customersData['active_customers'],
             'active_loans' => $loansData['active_loans'],
             'completed_loans' => $loansData['completed_loans'],
-            'today_target' => number_format($todayGoal['target']),
-            'today_collected' => number_format($todayGoal['collected']),
+            'today_target' => ($todayGoal['target']),
+            'today_collected' => ($todayGoal['collected']),
         ];
 
         return response()->json([
@@ -54,7 +55,7 @@ class Dashboard extends Controller
         $customersData = $this->customers($user_zones, $user_branch);
         $loansData = $this->loans($user_zones, $user_branch);
         $trends    = $this->collectionTrend($user_zones, $user_branch);
-        $todayGoal    = $this->todayTarget($user_zones);
+        $todayGoal    = $this->todayTarget([], $user_branch);
         $stats      = [
             'all_customers' => $customersData['all_customers'],
             'active_customers' => $customersData['active_customers'],
@@ -87,6 +88,10 @@ class Dashboard extends Controller
             ->where('status', '!=', 3)
             ->select('id', 'branch_name', 'balance')
             ->get();
+        $accounts = Accounts::select('account_name', 'account_balance')
+            ->where('company', $user_company)
+            ->where('account_status', 1)
+            ->get();
         $stats      = [
             'all_customers' => $customersData['all_customers'],
             'active_customers' => $customersData['active_customers'],
@@ -94,13 +99,16 @@ class Dashboard extends Controller
             'completed_loans' => $loansData['completed_loans'],
             'today_target' => ($todayGoal['target']),
             'today_collected' => ($todayGoal['collected']),
+            'yesterday_target' => ($todayGoal['target_yesterday']),
+            'yesterday_collected' => ($todayGoal['collected_yesterday']),
             'total_loan_portfolio_value' => ($finace_kpi['total_loan_portfolio_value']),
             'average_loan_amount' => ($finace_kpi['average_loan_amount']),
             'collection_efficiency' => $finace_kpi['collection_efficiency'],
             'approval_rate' => $operational_kpi['approval_rate'],
             'income' => $profit_loss['totalPaidInterest'],
             'expense' => $profit_loss['expense'],
-            'funds' => $funds
+            'funds' => $funds,
+            'accounts' => $accounts
         ];
 
         return response()->json([
@@ -125,12 +133,12 @@ class Dashboard extends Controller
             ->where('status', 5)
             ->get();
 
-            if(sizeof($loans) <= 0){
-                $total_loan_portfolio_value = 0;
-            }else{
-                $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
-            }
-        
+        if (sizeof($loans) <= 0) {
+            $total_loan_portfolio_value = 0;
+        } else {
+            $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
+        }
+
 
         // Define constants for statuses (replace 11 with a meaningful constant)
 
@@ -249,14 +257,14 @@ class Dashboard extends Controller
                 'totalLoanPenalty'      => $totalLoanPenalty,
                 'netProfit'             => $totalPaidInterest - $totalExpesne,
                 'percentage_principal_returned' => $totalLoanPrincipal <= 0 ? 0 : number_format(($totalPaidPrincipal / $totalLoanPrincipal) * 100, 2) . '%',
-                'percentage_interest_returned' => $totalLoanInterest <= 0 ? : number_format(($totalPaidInterest / $totalLoanInterest) * 100, 2) . '%'
+                'percentage_interest_returned' => $totalLoanInterest <= 0 ?: number_format(($totalPaidInterest / $totalLoanInterest) * 100, 2) . '%'
             ];
 
 
 
             // Step 7: Handle output
-           
-                return $data;
+
+            return $data;
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
@@ -284,7 +292,7 @@ class Dashboard extends Controller
             $all = $customersCount;
             $activeCustomersCount = Loans::where('company', $user_company)
 
-                ->where('status', 5)
+                ->whereIn('status', [5, 12])
                 ->distinct('customer')
                 ->count('customer');
             $active = $activeCustomersCount ?? 0;
@@ -300,7 +308,7 @@ class Dashboard extends Controller
 
 
                 $activeCustomersCount = Loans::whereIn('zone', $zones)
-                    ->where('status', 5)
+                    ->whereIn('status', [5, 12])
                     ->distinct('customer')
                     ->count('customer');
                 $active = $activeCustomersCount ?? 0;
@@ -317,7 +325,7 @@ class Dashboard extends Controller
 
 
                 $activeCustomersCount = Loans::whereIn('zone', $zones)
-                    ->where('status', 5)
+                    ->whereIn('status', [5, 12])
                     ->distinct('customer')
                     ->count('customer');
                 $active = $activeCustomersCount ?? 0;
@@ -336,35 +344,35 @@ class Dashboard extends Controller
         $completed = 0;
         if (in_array(21, $controls)) {
             $loanCounts = Loans::where('company', $user_company)
-                ->whereIn('status', [5, 6])
+                ->whereIn('status', [5, 6, 12])
                 ->selectRaw('status, COUNT(*) as count')
                 ->groupBy('status')
                 ->pluck('count', 'status');
-                $completed = $loanCounts[6] ?? 0;
-            $active = $loanCounts[5] ?? 0;
+            $completed = $loanCounts[6] ?? 0;
+            $active = $loanCounts[5] ?? 0 + $loanCounts[12] ?? 0;
         } elseif (in_array(20, $controls)) {
             if (!empty($branches)) {
                 $zones = Zone::whereIn("branch", $branches)
                     ->get();
                 $zoneIds = $zones->pluck('id');
                 $loanCounts = Loans::whereIn('zone', $zoneIds)
-                    ->whereIn('status', [5, 6])
+                    ->whereIn('status', [5, 6, 12])
                     ->selectRaw('status, COUNT(*) as count')
                     ->groupBy('status')
                     ->pluck('count', 'status');
 
-                $active = $loanCounts[5] ?? 0;
+                $active = $loanCounts[5] ?? 0 + $loanCounts[12] ?? 0;
                 $completed = $loanCounts[6] ?? 0;
             }
         } elseif (in_array(19, $controls)) {
             if (!empty($zones)) {
                 $loanCounts = Loans::whereIn('zone', $zones)
-                    ->whereIn('status', [5, 6])
+                    ->whereIn('status', [5, 6, 12])
                     ->selectRaw('status, COUNT(*) as count')
                     ->groupBy('status')
                     ->pluck('count', 'status');
 
-                $active = $loanCounts[5] ?? 0;
+                $active = $loanCounts[5] ?? 0 + $loanCounts[12] ?? 0;
                 $completed = $loanCounts[6] ?? 0;
             }
         }
@@ -484,15 +492,29 @@ class Dashboard extends Controller
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $today = date("Y-m-d");
+        $yesterday = date("Y-m-d", strtotime("$today -1 day"));
+        $collected_yesterday = 0;
+        $target = 0;
+        $target_yesterady = 0;
+        $collected = 0;
 
         // Get today's target
-        $target = LoanPaymentSchedules::where(['payment_due_date' => $today, 'company' => $user_company])
+        $target = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $today, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->whereIn('loans.status', [5, 12])
             ->when(!empty($zones), function ($query) use ($zones) {
-                $query->whereIn('zone', $zones);
+                $query->whereIn('loan_payment_schedule.zone', $zones);
             })
             ->sum('payment_total_amount');
 
-        // Get today's collected amount
+        $target_yesterady = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $yesterday, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->whereIn('loans.status', [5, 12])
+            ->when(!empty($zones), function ($query) use ($zones) {
+                $query->whereIn('loan_payment_schedule.zone', $zones);
+            })
+            ->sum('payment_total_amount');
+
         $collected = PaymentSubmissions::where(['payment_due_date' => $today, 'payment_submissions.company' => $user_company])
             ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
             ->whereIn('payment_submissions.submission_status', [4, 8, 11])
@@ -501,10 +523,50 @@ class Dashboard extends Controller
             })
             ->sum('amount');
 
+
+        if (sizeof($branches) > 0) {
+            $target = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $today, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+                ->whereIn('loans.status', [5, 12])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('loan_payment_schedule.branch', $branches);
+                })
+                ->sum('payment_total_amount');
+
+            $target_yesterady = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $yesterday, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+                ->whereIn('loans.status', [5, 12])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('loan_payment_schedule.branch', $branches);
+                })
+                ->sum('payment_total_amount');
+
+            $collected = PaymentSubmissions::where(['payment_due_date' => $today, 'payment_submissions.company' => $user_company])
+                ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                ->whereIn('payment_submissions.submission_status', [4, 8, 11])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('payment_submissions.branch', $branches);
+                })
+                ->sum('amount');
+
+            $collected_yesterday = PaymentSubmissions::where(['payment_due_date' => $yesterday, 'payment_submissions.company' => $user_company])
+                ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                ->whereIn('payment_submissions.submission_status', [4, 8, 11])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('payment_submissions.branch', $branches);
+                })
+                ->sum('amount');
+        }
+
+        // Get today's collected amount
+
+
         return [
             'date' => $today,
             'target' => $target,
             'collected' => $collected,
+            'target_yesterday' => $target_yesterady,
+            'collected_yesterday' => $collected_yesterday,
         ];
 
         return $results;

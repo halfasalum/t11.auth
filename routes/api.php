@@ -30,6 +30,8 @@ use Tymon\JWTAuth\Exceptions\TokenInvalidException;
     return $request->user();
 })->middleware('auth:sanctum'); */
 
+Route::prefix('v2')->group(base_path('routes/api_v2.php'));
+
 Route::post("/authenticate",[Authcontroller::class,"login"]);
 Route::get("/admin",[Authcontroller::class,"default_admin"]);
 Route::get("/receipt",[Authcontroller::class,"paymentsReceipts"]);

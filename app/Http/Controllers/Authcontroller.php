@@ -8,6 +8,7 @@ use App\Models\role_permissions;
 use App\Models\User;
 use App\Models\users_roles;
 use App\Models\ZoneUser;
+//use App\Services\AIAssistantService;
 use App\Services\UserLogService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
@@ -22,10 +23,18 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class Authcontroller extends Controller
 {
+   /*  protected $aiService;
+
+    public function __construct(AIAssistantService $aiService)
+    {
+        $this->aiService = $aiService;
+    } */
+
     public function login(Request $request, UserLogService $userLogService)
     {
         $username = $request->username;
         $password = $request->password;
+        $language = $request->language ?? 'en';
         $controls = [];
         $unique_controls = [];
         $branches = [];
@@ -94,8 +103,6 @@ class Authcontroller extends Controller
                 'name'  => $user->first_name  . " - " . $user->last_name,
             ])->fromUser($user);
 
-           
-
             $userLogService->log('login', null, $user->id, $user->user_company);
             return response()->json([
                 'token'     => $token,
@@ -110,11 +117,14 @@ class Authcontroller extends Controller
                 'message' => 'Login successful',
             ]);
         } else {
+            //$aiExplanation = $this->aiService->explainFailure('AUTH_INVALID_CREDENTIALS', 'User', $language);
+
             return response()->json([
                 'token' => null,
                 'name' => $username,
                 'success' => false,
                 'message' => 'Invalid credentials',
+                //'ai_explanation' => $aiExplanation
             ], 401);
         }
     }

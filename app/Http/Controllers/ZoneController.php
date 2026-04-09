@@ -57,6 +57,15 @@ class ZoneController extends Controller
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $user_id = $user->get('user_id');
+        $controls = $user->get('controls');
+        if (in_array(21, $controls)) {
+            $zones = Zone::where('company', $user_company)
+                ->where('status', 1)
+                ->get();
+            return response()->json(
+                $zones
+            );
+        }
         $zones = Zone::where(['zone_users.user_id' => $user_id, 'zone_users.status' => 1])
             ->select('zones.id', 'zone_name')
             ->join('zone_users', 'zone_users.zone_id', '=', 'zones.id')
