@@ -27,4 +27,45 @@ class LoanPaymentSchedules extends Model
         'is_submitted',
         'overdue_flag'
     ];
+
+    /**
+     * Get the loan associated with this payment schedule
+     */
+    public function loan()
+    {
+        return $this->belongsTo(Loans::class, 'loan_number', 'loan_number');
+    }
+
+    /**
+     * Get the payments for this schedule
+     */
+    public function payments()
+    {
+        return $this->hasMany(PaymentSubmissions::class, 'schedule_id', 'id');
+    }
+
+    /**
+     * Get the latest payment submission
+     */
+    public function latestPayment()
+    {
+        return $this->hasOne(PaymentSubmissions::class, 'schedule_id', 'id')
+            ->latest('submitted_date');
+    }
+
+    /**
+     * Get the customer through the customer zone
+     */
+    public function customerRelation()
+    {
+        return $this->belongsTo(Customers::class, 'customer', 'id');
+    }
+
+    /**
+     * Alternative simpler relationship name
+     */
+    public function customer()
+    {
+        return $this->belongsTo(Customers::class, 'customer', 'id');
+    }
 }

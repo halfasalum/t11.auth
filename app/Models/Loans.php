@@ -202,4 +202,20 @@ class Loans extends Model
                 });
         });
     }
+
+    /**
+     * Get the customer through the customer zone
+     */
+    public function customerRelation()
+    {
+        return $this->belongsTo(Customers::class, 'customer', 'id');
+    }
+
+    /**
+     * Alternative simpler relationship name
+     */
+    public function customer()
+    {
+        return $this->belongsTo(Customers::class, 'customer', 'id');
+    }
 }

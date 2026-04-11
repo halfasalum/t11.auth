@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\LoanController;
+use App\Http\Controllers\Api\V2\LoanPaymentsController;
+use App\Http\Controllers\Api\V2\PaymentsController;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Middleware\CheckSubscriptionLimits;
@@ -63,6 +65,31 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/overdue', [LoanController::class, 'overdue'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/defaulted', [LoanController::class, 'defaulted'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::post('/calculate-schedule', [LoanController::class, 'calculateLoanSchedule']);
+
+
+        // Modular payment endpoints
+        Route::get('/payments/today', [LoanPaymentsController::class, 'getTodayPaymentsData']);
+        Route::get('/payments/zone-approval', [LoanPaymentsController::class, 'getZoneApprovalData']);
+        Route::get('/payments/branch-approval', [LoanPaymentsController::class, 'getBranchApprovalData']);
+        Route::get('/payments/previous-approvals', [LoanPaymentsController::class, 'getPreviousApprovalsData']);
+        Route::get('/payments/unfilled', [LoanPaymentsController::class, 'getUnfilledPaymentsData']);
+        Route::get('/payments/rejected', [LoanPaymentsController::class, 'getRejectedPaymentsData']);
+
+        // Action endpoints
+        Route::post('/submitPayment', [LoanPaymentsController::class, 'submitPayment']);
+        Route::post('/approveZonePayments', [LoanPaymentsController::class, 'approveZonePayments']);
+        Route::post('/rejectZonePayments', [LoanPaymentsController::class, 'rejectZonePayments']);
+        Route::post('/approveBranchPayments', [LoanPaymentsController::class, 'approveBranchPayments']);
+        Route::post('/rejectBranchPayments', [LoanPaymentsController::class, 'rejectBranchPayments']);
+
+        // View endpoints (keep existing)
+        Route::get('/payments/view-zone/{zone}/{date}', [LoanPaymentsController::class, 'zonePaymentsView']);
+        Route::get('/payments/view/{branch}/{date}', [LoanPaymentsController::class, 'branchPaymentsView']);
+        Route::get('/payments/unfilled/{zone}/{date}', [LoanPaymentsController::class, 'fetchUnfilledPayments']);
+        Route::get('/payments/rejected/{zone}/{date}', [LoanPaymentsController::class, 'fetchRejectedPayments']);
+
+
+
         Route::get('/{loan}', [LoanController::class, 'show'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/{loan}/schedule', [LoanController::class, 'schedule'])->middleware(ControlAccessMiddleware::class . ':8');
         // Loan Approval Data - Get all information needed for approval decision
@@ -88,6 +115,17 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/products/{product}/enable', [LoanController::class, 'enableProduct'])->middleware(ControlAccessMiddleware::class . ':23');
         Route::post('/products/{product}/disable', [LoanController::class, 'disableProduct'])->middleware(ControlAccessMiddleware::class . ':23');
         Route::get('/products/{product}/details/{customer}', [LoanController::class, 'productDetails'])->middleware(ControlAccessMiddleware::class . ':7');
+
+
+
+
+
+        // Schedule management
+        Route::get('/loans/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
+        Route::delete('/loans/deleteSchedule/{scheduleId}', [LoanPaymentsController::class, 'deleteSchedule']);
+
+        // Accounts
+        Route::get('/accounts', [LoanPaymentsController::class, 'listActiveAccounts']);
     });
 
     
