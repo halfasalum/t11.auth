@@ -3,7 +3,9 @@
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
+use App\Http\Controllers\Api\V2\LoansProductsController;
 use App\Http\Controllers\Api\V2\PaymentsController;
+use App\Http\Controllers\BankController;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Middleware\CheckSubscriptionLimits;
@@ -75,12 +77,23 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/payments/unfilled', [LoanPaymentsController::class, 'getUnfilledPaymentsData']);
         Route::get('/payments/rejected', [LoanPaymentsController::class, 'getRejectedPaymentsData']);
 
+        // Product management
+        Route::get('/products', [LoansProductsController::class, 'list'])->middleware(ControlAccessMiddleware::class . ':18');
+        Route::get('/products/active', [LoansProductsController::class, 'activeList'])->middleware(ControlAccessMiddleware::class . ':7');
+        Route::post('/products/register', [LoansProductsController::class, 'register'])->middleware(ControlAccessMiddleware::class . ':23');
+        Route::post('/products/update', [LoansProductsController::class, 'update'])->middleware(ControlAccessMiddleware::class . ':23');
+        Route::post('/products/enable', [LoansProductsController::class, 'enable'])->middleware(ControlAccessMiddleware::class . ':23');
+        Route::post('/products/disable', [LoansProductsController::class, 'disable'])->middleware(ControlAccessMiddleware::class . ':23');
+        Route::get('/products/{product}/details/{customer?}', [LoansProductsController::class, 'productDetails'])->middleware(ControlAccessMiddleware::class . ':7');
+
         // Action endpoints
         Route::post('/submitPayment', [LoanPaymentsController::class, 'submitPayment']);
         Route::post('/approveZonePayments', [LoanPaymentsController::class, 'approveZonePayments']);
         Route::post('/rejectZonePayments', [LoanPaymentsController::class, 'rejectZonePayments']);
         Route::post('/approveBranchPayments', [LoanPaymentsController::class, 'approveBranchPayments']);
         Route::post('/rejectBranchPayments', [LoanPaymentsController::class, 'rejectBranchPayments']);
+
+
 
         // View endpoints (keep existing)
         Route::get('/payments/view-zone/{zone}/{date}', [LoanPaymentsController::class, 'zonePaymentsView']);
@@ -108,13 +121,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
 
-        // Product management
-        Route::get('/products', [LoanController::class, 'products'])->middleware(ControlAccessMiddleware::class . ':18');
-        Route::post('/products', [LoanController::class, 'storeProduct'])->middleware(ControlAccessMiddleware::class . ':23');
-        Route::put('/products/{product}', [LoanController::class, 'updateProduct'])->middleware(ControlAccessMiddleware::class . ':23');
-        Route::post('/products/{product}/enable', [LoanController::class, 'enableProduct'])->middleware(ControlAccessMiddleware::class . ':23');
-        Route::post('/products/{product}/disable', [LoanController::class, 'disableProduct'])->middleware(ControlAccessMiddleware::class . ':23');
-        Route::get('/products/{product}/details/{customer}', [LoanController::class, 'productDetails'])->middleware(ControlAccessMiddleware::class . ':7');
+        
 
 
 
@@ -128,5 +135,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/accounts', [LoanPaymentsController::class, 'listActiveAccounts']);
     });
 
+     Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::get("/bank/active-accounts", [BankController::class, "listActiveAccounts"])->middleware([ControlAccessMiddleware::class . ':9']);
+    Route::post("/bank/register", [BankController::class, "registeriAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
     
 });

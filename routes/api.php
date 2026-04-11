@@ -127,6 +127,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::get("/controls", [Modules::class, "listControls"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::get("/module/permissions", [Modules::class, "getModulesPermissions"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::get("/roles", [Roles::class, "listRoles"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::get("/roles/{id}", [Roles::class, "show"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::post("/roles/register", [Roles::class, "register"])->middleware([ControlAccessMiddleware::class . ':3']);
     Route::post("/role/update", [Roles::class, "updateRolePermission"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':14']);

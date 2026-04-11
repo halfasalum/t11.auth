@@ -16,8 +16,8 @@ class Roles extends Controller
     public function listRoles()
     {
         $user = JWTAuth::parseToken()->getPayload();
-                $user_company = $user->get('company');
-        $roles = ModelsRoles::where(["company" => $user_company,"status"=>1])
+        $user_company = $user->get('company');
+        $roles = ModelsRoles::where(["company" => $user_company, "status" => 1])
             ->select("id", "role_name", "created_at")
             ->get();
         return response()->json($roles);
@@ -33,22 +33,34 @@ class Roles extends Controller
         );
     }
 
+    public function show($role_id)
+    {
+        $user = JWTAuth::parseToken()->getPayload();
+        $user_company = $user->get('company');
+        $permissions = ModelsRoles::where(['id' => $role_id, 'status' => 1, 'company' => $user_company])
+            ->select('id', 'role_name')
+            ->first();
+        return response()->json(
+            $permissions
+        );
+    }
+
     public function register(Request $request)
     {
 
         try {
             $validated = $request->validate([
-                'role_name'   => 'bail|required|string|max:255',  
+                'role_name'   => 'bail|required|string|max:255',
                 'permissions' => 'required',
             ]);
             /* $role = $request->role;
             role_permissions::where('role_id', $role)
                 ->update(['permission_status' => 2]); */
-                $user = JWTAuth::parseToken()->getPayload();
-                $user_company = $user->get('company');
-                $validated['company']       = $user_company;
-                $role = ModelsRoles::create($validated);
-                $role_id = $role->id;
+            $user = JWTAuth::parseToken()->getPayload();
+            $user_company = $user->get('company');
+            $validated['company']       = $user_company;
+            $role = ModelsRoles::create($validated);
+            $role_id = $role->id;
             $permissions = $request->permissions;
             if (sizeof($permissions) > 0) {
                 foreach ($permissions as $permission) {
@@ -72,30 +84,44 @@ class Roles extends Controller
         }
     }
 
-    public function updateRolePermission(Request $request){
+    public function updateRolePermission(Request $request)
+    {
         try {
             $validated = $request->validate([
-                //'role_name'   => 'bail|required|string|max:255',  
-                'role_id'   => 'bail|required|integer',  
-                'permissions' => 'required',
+                // Uncommented the role_name validation
+                'role_name'   => 'bail|required|string|max:255',
+                'role_id'     => 'bail|required|integer',
+                'permissions' => 'required|array', // Assuming it should be an array
             ]);
-             $role = $request->role_id;
-            role_permissions::where('role_id', $role)
-                ->update(['permission_status' => 3]); 
+
+            $role_id = $request->role_id;
+
+            // 1. Update the role name
+            // Use your appropriate Role Model here, commonly `Role::where...` or `Roles::where...`
+            ModelsRoles::where('id', $role_id)->update([
+                'role_name' => $request->role_name
+            ]);
+
+            // 2. Clear old permissions
+            role_permissions::where('role_id', $role_id)
+                ->update(['permission_status' => 3]);
+
+            // 3. Insert new permissions
             $permissions = $request->permissions;
             if (sizeof($permissions) > 0) {
                 foreach ($permissions as $permission) {
                     $data = [
-                        'role_id' => $role,
-                        'permission_id' => $permission,
+                        'role_id'           => $role_id,
+                        'permission_id'     => $permission,
                         'permission_status' => 1
                     ];
                     role_permissions::create($data);
                 }
             }
+
             return response()->json([
                 'status' => 'success',
-                'message' => 'Role permissions is successfully updated',
+                'message' => 'Role and permissions successfully updated',
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([
@@ -104,6 +130,7 @@ class Roles extends Controller
             ], 422);
         }
     }
+
 
     public function getUserAssignedRoles($user_id)
     {
