@@ -1200,4 +1200,218 @@ class CustomerController extends Controller
         $request->merge(['customer' => $id]);
         return $this->registerCollateral($request);
     }
+
+
+    /**
+     * Update customer information
+     * Aligned with frontend CustomerEdit.tsx form fields
+     */
+    public function update(Request $request, $id)
+    {
+        try {
+            $companyId = $this->getCompanyId();
+            $userId = $this->getUserId();
+
+            // Find customer with zone assignment
+            $customer = Customers::where('id', $id)
+                ->whereHas('zoneAssignment', function ($q) use ($companyId) {
+                    $q->where('company_id', $companyId);
+                })
+                ->first();
+
+            if (!$customer) {
+                return $this->errorResponse('Customer not found', 404);
+            }
+
+            // Check access permission
+            if (!$this->hasAccessToCustomer($customer)) {
+                return $this->errorResponse('Unauthorized access', 403);
+            }
+
+            // Validate request with frontend field names
+            $validated = $request->validate([
+                'fullname' => 'sometimes|required|string|max:255',
+                'phone' => 'sometimes|required|numeric|digits:10',
+                'email' => 'nullable|email|max:255',
+                'gender' => 'sometimes|required',
+                'maritual' => 'sometimes|required',  // Frontend uses 'maritual'
+                'nida' => 'sometimes|required|numeric|digits:20',
+                'address' => 'nullable|string|max:255',
+                'city' => 'sometimes|required',
+                'education' => 'sometimes|required',  // Frontend uses 'education'
+                'employment' => 'sometimes|required', // Frontend uses 'employment'
+                'experience' => 'sometimes|required|numeric',
+                'income' => 'sometimes|required|numeric',
+                'dob' => 'sometimes|required|date|date_format:Y-m-d|before:today',  // Frontend uses 'dob'
+                'zone' => 'sometimes|required|exists:zones,id',
+                'customer_image' => 'nullable|image|mimes:jpg,png,jpeg|max:2048',
+            ]);
+
+            DB::beginTransaction();
+
+            // Prepare update data (map frontend fields to database fields)
+            $updateData = [];
+
+            if (isset($validated['fullname'])) {
+                $updateData['fullname'] = ucwords(strtolower(trim($validated['fullname'])));
+            }
+            if (isset($validated['email'])) {
+                $updateData['email'] = strtolower($validated['email']);
+            }
+            if (isset($validated['phone'])) {
+                $updateData['customer_phone'] = $validated['phone'];
+                $updateData['phone'] = '255' . substr($validated['phone'], 1);
+            }
+            if (isset($validated['gender'])) {
+                $updateData['gender'] = $validated['gender'];
+            }
+            if (isset($validated['maritual'])) {
+                $updateData['marital_status'] = $validated['maritual'];  // Map maritual -> marital_status
+            }
+            if (isset($validated['nida'])) {
+                $updateData['nida'] = $validated['nida'];
+            }
+            if (isset($validated['address'])) {
+                $updateData['address'] = ucwords(strtolower($validated['address']));
+            }
+            if (isset($validated['city'])) {
+                $updateData['city'] = $validated['city'];
+            }
+            if (isset($validated['education'])) {
+                $updateData['education_level'] = $validated['education'];  // Map education -> education_level
+            }
+            if (isset($validated['employment'])) {
+                $updateData['employment_type'] = $validated['employment'];  // Map employment -> employment_type
+            }
+            if (isset($validated['experience'])) {
+                $updateData['experience'] = $validated['experience'];
+            }
+            if (isset($validated['income'])) {
+                $updateData['income'] = $validated['income'];
+            }
+            if (isset($validated['dob'])) {
+                $updateData['date_of_birth'] = $validated['dob'];  // Map dob -> date_of_birth
+            }
+
+            // Handle image upload
+            if ($request->hasFile('customer_image')) {
+                // Delete old image if exists
+                if ($customer->customer_image && file_exists(base_path('../t11.customers_public/' . $customer->customer_image))) {
+                    unlink(base_path('../t11.customers_public/' . $customer->customer_image));
+                }
+
+                $file = $request->file('customer_image');
+                $filename = time() . '.' . $file->getClientOriginalExtension();
+                $path = base_path('../t11.customers_public/uploads/customers');
+                if (!file_exists($path)) {
+                    mkdir($path, 0755, true);
+                }
+                $file->move($path, $filename);
+                $updateData['customer_image'] = 'uploads/customers/' . $filename;
+            }
+
+            // Update customer
+            if (!empty($updateData)) {
+                $customer->update($updateData);
+            }
+
+            // Update zone assignment if zone changed
+            if (isset($validated['zone'])) {
+                $zoneData = Zone::find($validated['zone']);
+                if (!$zoneData) {
+                    throw new \Exception('Zone not found');
+                }
+
+                CustomersZone::where('customer_id', $customer->id)
+                    ->where('company_id', $companyId)
+                    ->update([
+                        'zone_id' => $validated['zone'],
+                        'branch_id' => $zoneData->branch,
+                        //'updated_by' => $userId,
+                    ]);
+            }
+
+            DB::commit();
+
+            // Refresh customer data
+            $customer->refresh();
+            $customer->load(['zoneAssignment' => function ($q) use ($companyId) {
+                $q->where('company_id', $companyId)->with('zone', 'branch');
+            }]);
+
+            return $this->successResponse(
+                $this->transformCustomer($customer, true),
+                'Customer updated successfully'
+            );
+        } catch (ValidationException $e) {
+            DB::rollBack();
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Customer update failed', [
+                'customer_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return $this->errorResponse('Failed to update customer: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Delete customer (soft delete)
+     */
+    public function destroy($id)
+    {
+        try {
+            $companyId = $this->getCompanyId();
+            $userId = $this->getUserId();
+
+            // Check permission
+            if (!$this->hasPermission(21)) {
+                return $this->errorResponse('Unauthorized', 403);
+            }
+
+            $customerZone = CustomersZone::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->first();
+
+            if (!$customerZone) {
+                return $this->errorResponse('Customer not found', 404);
+            }
+
+            DB::beginTransaction();
+
+            // Soft delete customer zone assignment
+            $customerZone->update([
+                'status' => CustomersZone::STATUS_DELETED,
+                'deleted_by' => $userId,
+                'deleted_at' => now(),
+            ]);
+
+            // Also soft delete related data
+            CustomerReferees::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->update(['status' => 3]);
+
+            Attachements::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->update(['status' => 3]);
+
+            Collateral::where('customer', $id)
+                ->where('company', $companyId)
+                ->update(['status' => 3]);
+
+            DB::commit();
+
+            return $this->successResponse(null, 'Customer deleted successfully');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Customer deletion failed', [
+                'customer_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return $this->errorResponse('Failed to delete customer: ' . $e->getMessage(), 500);
+        }
+    }
 }

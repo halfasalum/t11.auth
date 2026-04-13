@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Branch extends Model
 {
-    
+    protected $connection = 'mysql';
     protected $table = 'branches';
     protected $primaryKey = 'id';
     public $timestamps = true;

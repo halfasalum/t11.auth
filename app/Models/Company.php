@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Company extends Model
 {
     use HasFactory;
+
+    protected $connection = 'mysql';
     protected $table = 'companies';
     protected $primaryKey = 'id';
     public $timestamps = true;

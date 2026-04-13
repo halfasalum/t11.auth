@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class BranchUser extends Model
 {
     use HasFactory;
+
+    protected $connection = 'mysql';
     protected $table = 'branch_users';
     protected $primaryKey = 'id';
     public $timestamps = true;

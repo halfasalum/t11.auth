@@ -30,11 +30,13 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post("/collateral", [CustomerController::class, "registerCollateral"])->middleware([ControlAccessMiddleware::class . ':12']);
         Route::post("/submit", [CustomerController::class, "customerSubmit"])->middleware([ControlAccessMiddleware::class . ':12']);
 
-        Route::get('/{id}', [CustomerController::class, 'show'])->middleware(ControlAccessMiddleware::class . ':7');
+        Route::get('/{id}', [CustomerController::class, 'show'])->middleware(ControlAccessMiddleware::class . ':13');
+        Route::put('/{id}', [CustomerController::class, 'update'])->middleware(ControlAccessMiddleware::class . ':21');
+        Route::delete('/{id}', [CustomerController::class, 'destroy'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::get('/{id}/profile', [CustomerController::class, 'profile'])->middleware(ControlAccessMiddleware::class . ':7');
 
         // Customer Registration
-        Route::post('/', [CustomerController::class, 'store'])->middleware(ControlAccessMiddleware::class . ':12');
+        //Route::post('/', [CustomerController::class, 'store'])->middleware(ControlAccessMiddleware::class . ':12');
         Route::post('/groups', [CustomerController::class, 'storeGroup'])->middleware(ControlAccessMiddleware::class . ':12');
 
         // Customer Actions
@@ -121,7 +123,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
 
-        
+
 
 
 
@@ -135,8 +137,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/accounts', [LoanPaymentsController::class, 'listActiveAccounts']);
     });
 
-     Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
     Route::get("/bank/active-accounts", [BankController::class, "listActiveAccounts"])->middleware([ControlAccessMiddleware::class . ':9']);
     Route::post("/bank/register", [BankController::class, "registeriAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
-    
 });

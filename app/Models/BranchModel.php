@@ -8,10 +8,12 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class BranchModel extends Model
 {
     use HasFactory;
+
+    protected $connection = 'mysql';
     protected $table = 'branches';
     protected $primaryKey = 'id';
     public $timestamps = true;
-    protected $fillable = ['branch_name', 'balance', 'registered_by', 'company','status'];
+    protected $fillable = ['branch_name', 'balance', 'registered_by', 'company', 'status'];
 
     /**
      * Get the zones in this branch

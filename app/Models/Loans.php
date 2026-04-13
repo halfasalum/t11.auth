@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Loans extends Model
 {
     use HasFactory;
-    //protected $connection = 'loan_db';
+    protected $connection = 'loan_db';
 
     // Status Constants
     public const STATUS_SUBMITTED = 4;

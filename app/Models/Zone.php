@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Zone extends Model
 {
     use HasFactory;
+
+    protected $connection = 'mysql';
     protected $table = 'zones';
     protected $primaryKey = 'id';
     public $timestamps = true;
