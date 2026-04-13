@@ -22,4 +22,9 @@ class Zone extends Model
     {
         return $this->belongsTo(BranchModel::class, 'branch', 'id');
     }
+
+    public function loans()
+    {
+        return $this->hasMany(Loans::class, 'zone', 'id');
+    }
 }

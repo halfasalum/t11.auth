@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class CustomerController extends Controller
@@ -183,11 +184,14 @@ class CustomerController extends Controller
         // Query customers with their zone assignment
         $query = Customers::with(['zoneAssignment' => function ($q) use ($companyId) {
             $q->where('company_id', $companyId);
+            $q->where('status', '!=', 3);
+            $q->where('status', '!=', 9);
         }]);
 
         // Only include customers that have a zone assignment for this company
         $query->whereHas('zoneAssignment', function ($q) use ($companyId) {
             $q->where('company_id', $companyId);
+            $q->where('status', '!=', 3);
         });
 
         // Apply zone/branch filtering based on user role
@@ -1360,7 +1364,7 @@ class CustomerController extends Controller
     /**
      * Delete customer (soft delete)
      */
-    public function destroy($id)
+    /* public function destroy($id)
     {
         try {
             $companyId = $this->getCompanyId();
@@ -1383,9 +1387,9 @@ class CustomerController extends Controller
 
             // Soft delete customer zone assignment
             $customerZone->update([
-                'status' => CustomersZone::STATUS_DELETED,
-                'deleted_by' => $userId,
-                'deleted_at' => now(),
+                'statuss' => 3,
+                //'deleted_by' => $userId,
+                //'deleted_at' => now(),
             ]);
 
             // Also soft delete related data
@@ -1402,6 +1406,113 @@ class CustomerController extends Controller
                 ->update(['status' => 3]);
 
             DB::commit();
+
+            return $this->successResponse(null, 'Customer deleted successfully');
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Customer deletion failed', [
+                'customer_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return $this->errorResponse('Failed to delete customer: ' . $e->getMessage(), 500);
+        }
+    } */
+
+
+    /**
+     * Delete customer (soft delete)
+     */
+    public function destroy($id)
+    {
+        try {
+            $companyId = $this->getCompanyId();
+            $userId = $this->getUserId();
+
+            // Check permission
+            if (!$this->hasPermission(21)) {
+                return $this->errorResponse('Unauthorized', 403);
+            }
+
+            $customerZone = CustomersZone::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->first();
+
+            if (!$customerZone) {
+                return $this->errorResponse('Customer not found', 404);
+            }
+
+            // Log before update
+            Log::info('Before deletion - CustomerZone data:', [
+                'customer_id' => $id,
+                'current_status' => $customerZone->status,
+                'status_constant' => CustomersZone::STATUS_DELETED,
+                'record_exists' => $customerZone ? 'yes' : 'no',
+                'customer_zone_id' => $customerZone->id,
+            ]);
+
+            DB::beginTransaction();
+
+            // Try update with different approaches
+            $updateData = [
+                'status' => CustomersZone::STATUS_DELETED,
+            ];
+
+            // Check if deleted_by column exists
+            $hasDeletedBy = Schema::hasColumn('customers_zones', 'deleted_by');
+            $hasDeletedAt = Schema::hasColumn('customers_zones', 'deleted_at');
+
+            if ($hasDeletedBy) {
+                $updateData['deleted_by'] = $userId;
+            }
+            if ($hasDeletedAt) {
+                $updateData['deleted_at'] = now();
+            }
+
+            Log::info('Update data being sent:', [
+                'update_data' => $updateData,
+                'has_deleted_by_column' => $hasDeletedBy,
+                'has_deleted_at_column' => $hasDeletedAt,
+            ]);
+
+            // Perform update
+            $updated = $customerZone->update($updateData);
+
+            Log::info('Update result:', [
+                'updated_successfully' => $updated,
+                'new_status_after_update' => $customerZone->fresh()->status,
+            ]);
+
+            // Also update related data
+            $refereesUpdated = CustomerReferees::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->update(['status' => 3]);
+
+            $attachmentsUpdated = Attachements::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->update(['status' => 3]);
+
+            $collateralsUpdated = Collateral::where('customer', $id)
+                ->where('company', $companyId)
+                ->update(['status' => 3]);
+
+            Log::info('Related records updated:', [
+                'referees_updated' => $refereesUpdated,
+                'attachments_updated' => $attachmentsUpdated,
+                'collaterals_updated' => $collateralsUpdated,
+            ]);
+
+            DB::commit();
+
+            // Verify final status
+            $finalCustomerZone = CustomersZone::where('customer_id', $id)
+                ->where('company_id', $companyId)
+                ->first();
+
+            Log::info('After deletion - Final state:', [
+                'final_status' => $finalCustomerZone->status,
+                'status_matches_expected' => $finalCustomerZone->status == CustomersZone::STATUS_DELETED,
+            ]);
 
             return $this->successResponse(null, 'Customer deleted successfully');
         } catch (\Exception $e) {

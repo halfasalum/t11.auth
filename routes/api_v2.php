@@ -5,6 +5,15 @@ use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
 use App\Http\Controllers\Api\V2\LoansProductsController;
 use App\Http\Controllers\Api\V2\PaymentsController;
+use App\Http\Controllers\Api\V2\Reports\AnalyticsReportController;
+use App\Http\Controllers\Api\V2\Reports\BranchReportController;
+use App\Http\Controllers\Api\V2\Reports\CollectionReportController;
+use App\Http\Controllers\Api\V2\Reports\ComplianceReportController;
+use App\Http\Controllers\Api\V2\Reports\CreditScoreReportController;
+use App\Http\Controllers\Api\V2\Reports\CustomerReportController;
+use App\Http\Controllers\Api\V2\Reports\FinancialReportController;
+use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
+use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
 use App\Http\Controllers\BankController;
 use Illuminate\Support\Facades\Route;
 
@@ -19,6 +28,60 @@ use App\Http\Middleware\JwtMiddleware;
 // ============================================
 
 Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group(function () {
+
+    // routes/api.php
+
+    // routes/api.php - Add these routes
+
+    Route::prefix('reports')->group(function () {
+
+        // Portfolio Reports
+        Route::get('/portfolio/summary', [PortfolioReportController::class, 'portfolioSummary']);
+        Route::get('/portfolio/by-product', [PortfolioReportController::class, 'portfolioByProduct']);
+        Route::get('/portfolio/aging', [PortfolioReportController::class, 'loanAgingReport']);
+
+        // Financial Reports
+        Route::get('/financial/income-statement', [FinancialReportController::class, 'incomeStatement']);
+        Route::get('/financial/balance-sheet', [FinancialReportController::class, 'balanceSheet']);
+        Route::get('/financial/cash-flow', [FinancialReportController::class, 'cashFlowStatement']);
+        Route::get('/financial/account-history/{accountId}', [FinancialReportController::class, 'accountHistory']);
+        Route::get('/financial/accounts/list', [FinancialReportController::class, 'listAccounts']);
+
+        // Branch Reports
+        Route::get('/branch/performance', [BranchReportController::class, 'branchPerformance']);
+        Route::get('/zone/performance', [BranchReportController::class, 'zonePerformance']);
+        Route::get('/branch/funds-allocation', [BranchReportController::class, 'fundsAllocation']);
+
+        // Customer Reports
+        Route::get('/customer/credit-score', [CreditScoreReportController::class, 'creditScoreReport']);
+        Route::get('/customer/repayment-behavior', [CustomerReportController::class, 'repaymentBehavior']);
+        Route::get('/customer/eligibility', [CustomerReportController::class, 'customerEligibility']);
+        Route::get('/customer/top-borrowers', [CustomerReportController::class, 'topBorrowers']);
+
+        // Collection Reports
+        Route::get('/collection/daily', [CollectionReportController::class, 'dailyCollection']);
+        Route::get('/collection/overdue', [CollectionReportController::class, 'overdueReport']);
+        Route::get('/collection/reconciliation', [CollectionReportController::class, 'reconciliationReport']);
+
+        // Operational Reports
+        Route::get('/operations/expense-analysis', [OperationalReportController::class, 'expenseAnalysis']);
+        Route::get('/operations/income-analysis', [OperationalReportController::class, 'incomeAnalysis']);
+        Route::get('/operations/customer-acquisition', [OperationalReportController::class, 'customerAcquisition']);
+        Route::get('/operations/loan-approval-efficiency', [OperationalReportController::class, 'loanApprovalEfficiency']);
+
+        // Analytics Reports
+        Route::get('/analytics/default-risk', [AnalyticsReportController::class, 'defaultRiskPrediction']);
+        Route::get('/analytics/customer-ltv', [AnalyticsReportController::class, 'customerLTV']);
+        Route::get('/analytics/seasonal-demand', [AnalyticsReportController::class, 'seasonalDemand']);
+        Route::get('/analytics/portfolio-diversification', [AnalyticsReportController::class, 'portfolioDiversification']);
+
+        // Compliance Reports
+        Route::get('/compliance/interest-income', [ComplianceReportController::class, 'interestIncomeReport']);
+        Route::get('/compliance/loan-loss-provision', [ComplianceReportController::class, 'loanLossProvision']);
+
+        Route::get('/accounts/list', [FinancialReportController::class, 'listAccounts']);
+    });
+
     Route::prefix('customers')->group(function () {
         // Customer Management
         Route::get('/', [CustomerController::class, 'index'])->middleware(ControlAccessMiddleware::class . ':7');

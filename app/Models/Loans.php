@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Loans extends Model
 {
     use HasFactory;
+
+    
     protected $connection = 'loan_db';
 
     // Status Constants

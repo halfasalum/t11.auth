@@ -31,4 +31,19 @@ class PaymentSubmissions extends Model
         'paid_interest',
         'paid_account'
     ];
+
+    public function loan()
+    {
+        return $this->belongsTo(Loans::class, 'loan_number', 'loan_number');
+    }
+
+    public function schedule()
+    {
+        return $this->belongsTo(LoanPaymentSchedules::class, 'schedule_id', 'id');
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customers::class, 'customer_id', 'id');
+    }
 }

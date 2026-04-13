@@ -34,4 +34,9 @@ class LoansProducts extends Model
         'registered_by',
         'interest_amount',
     ];
+
+    public function loans()
+    {
+        return $this->hasMany(Loans::class, 'product', 'id');
+    }
 }
