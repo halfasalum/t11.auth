@@ -11,9 +11,9 @@ class FundsAllocation extends Model
     protected $table = 'branch_funds_allocation';
     protected $primaryKey = 'id';
     public $timestamps = true;
-    protected $fillable = ['branch', 'company', 'allocated_amount','allocated_by'];
+    protected $fillable = ['branch', 'company', 'allocated_amount', 'allocated_by'];
 
-    public function branch()
+    public function allocation_branch()
     {
         return $this->belongsTo(BranchModel::class, 'branch', 'id');
     }

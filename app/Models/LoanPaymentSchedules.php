@@ -28,6 +28,8 @@ class LoanPaymentSchedules extends Model
         'overdue_flag'
     ];
 
+ 
+
     /**
      * Get the loan associated with this payment schedule
      */

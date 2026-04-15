@@ -10,7 +10,7 @@ class Loans extends Model
     use HasFactory;
 
     
-    protected $connection = 'loan_db';
+    
 
     // Status Constants
     public const STATUS_SUBMITTED = 4;
@@ -20,6 +20,7 @@ class Loans extends Model
     public const STATUS_OVERDUE = 12;
     public const STATUS_REJECTED = 9;
 
+    protected $connection = 'loan_db';
     protected $table = 'loans';
     protected $primaryKey = 'id';
     public $timestamps = true;
@@ -129,6 +130,8 @@ class Loans extends Model
     {
         return $this->belongsTo(User::class, 'registered_by', 'id');
     }
+
+    
 
     /**
      * Get payment schedules for this loan

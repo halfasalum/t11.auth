@@ -59,7 +59,7 @@ class CustomerReportController extends BaseController
                 $onTimeRate = $totalExpected > 0 ? round(($totalPaid / $totalExpected) * 100, 2) : 0;
                 $avgDaysLate = $latePayments > 0 ? round($totalDaysLate / $latePayments, 2) : 0;
                 
-                // Determine risk level based on on-time rate
+                // Determine risk level
                 $riskLevel = 'Low Risk';
                 if ($onTimeRate < 70) {
                     $riskLevel = 'High Risk';
@@ -103,10 +103,8 @@ class CustomerReportController extends BaseController
             
             $result = [];
             foreach ($customers as $customer) {
-                // Use the same credit score calculation as CreditScoreReportController
-                $creditScoreData = $this->calculateCreditScore($customer);
-                $creditScore = $creditScoreData['credit_score'];
-                $rating = $creditScoreData['rating'];
+                // Calculate credit score (reuse from CreditScoreReportController logic)
+                $creditScore = $this->calculateSimpleCreditScore($customer);
                 
                 $monthlyIncome = $customer->income ?? 0;
                 $existingDebt = $customer->loans->sum(function ($loan) {
@@ -115,7 +113,7 @@ class CustomerReportController extends BaseController
                 
                 $dtiRatio = $monthlyIncome > 0 ? round(($existingDebt / $monthlyIncome) * 100, 2) : 100;
                 
-                // Determine eligibility based on credit score and DTI
+                // Determine eligibility
                 $eligibilityStatus = 'Not Eligible';
                 $maxLoanAmount = 0;
                 $recommendedProduct = null;
@@ -146,7 +144,6 @@ class CustomerReportController extends BaseController
                     'customer_name' => $customer->fullname,
                     'phone' => $customer->phone,
                     'credit_score' => $creditScore,
-                    'credit_rating' => $rating,
                     'monthly_income' => (float) $monthlyIncome,
                     'existing_debt' => (float) $existingDebt,
                     'dti_ratio' => $dtiRatio,
@@ -183,10 +180,7 @@ class CustomerReportController extends BaseController
                 $totalRepaid = $customer->loans->sum('loan_paid');
                 $outstandingBalance = $totalBorrowed - $totalRepaid;
                 $repaymentRate = $totalBorrowed > 0 ? round(($totalRepaid / $totalBorrowed) * 100, 2) : 0;
-                
-                // Use the same credit score calculation
-                $creditScoreData = $this->calculateCreditScore($customer);
-                $creditScore = $creditScoreData['credit_score'];
+                $creditScore = $this->calculateSimpleCreditScore($customer);
                 
                 $borrowers[] = [
                     'customer_id' => $customer->id,
@@ -219,64 +213,17 @@ class CustomerReportController extends BaseController
         }
     }
     
-    /**
-     * Calculate Credit Score (same logic as CreditScoreReportController)
-     */
-    private function calculateCreditScore($customer)
+    private function calculateSimpleCreditScore($customer)
     {
         $score = 700;
-        $factors = [];
         
-        // 1. Payment History (35% - max 350 points)
-        $paymentHistoryScore = $this->calculatePaymentHistoryScore($customer);
-        $score += $paymentHistoryScore;
-        
-        // 2. Outstanding Debt (30% - max 300 points)
-        $debtScore = $this->calculateDebtScore($customer);
-        $score += $debtScore;
-        
-        // 3. Credit History Length (15% - max 150 points)
-        $historyScore = $this->calculateHistoryScore($customer);
-        $score += $historyScore;
-        
-        // 4. Income Stability (10% - max 100 points)
-        $incomeScore = $this->calculateIncomeScore($customer);
-        $score += $incomeScore;
-        
-        // 5. Profile Completeness (10% - max 100 points)
-        $profileScore = $this->calculateProfileScore($customer);
-        $score += $profileScore;
-        
-        $finalScore = min(1000, max(0, $score));
-        
-        $rating = match(true) {
-            $finalScore >= 800 => 'Excellent',
-            $finalScore >= 700 => 'Good',
-            $finalScore >= 600 => 'Fair',
-            $finalScore >= 500 => 'Poor',
-            default => 'Very Poor'
-        };
-        
-        return [
-            'credit_score' => $finalScore,
-            'rating' => $rating,
-        ];
-    }
-    
-    private function calculatePaymentHistoryScore($customer)
-    {
-        $loans = $customer->loans;
-        if ($loans->isEmpty()) return 200;
-        
+        // Payment history factor
         $totalPayments = 0;
         $onTimePayments = 0;
-        $defaultedLoans = 0;
-        
-        foreach ($loans as $loan) {
+        foreach ($customer->loans as $loan) {
             $payments = PaymentSubmissions::where('loan_number', $loan->loan_number)
                 ->where('submission_status', 11)
                 ->get();
-            
             foreach ($payments as $payment) {
                 $totalPayments++;
                 $schedule = $payment->schedule;
@@ -284,64 +231,22 @@ class CustomerReportController extends BaseController
                     $onTimePayments++;
                 }
             }
-            
-            if ($loan->status == Loans::STATUS_DEFAULTED) {
-                $defaultedLoans++;
-            }
         }
-        
-        $score = 0;
         if ($totalPayments > 0) {
             $onTimeRate = ($onTimePayments / $totalPayments) * 100;
-            $score = (int)(($onTimeRate / 100) * 300);
+            $score += ($onTimeRate / 100) * 150;
         }
         
-        $score -= ($defaultedLoans * 50);
-        
-        return max(0, min(350, $score));
-    }
-    
-    private function calculateDebtScore($customer)
-    {
-        $totalOutstanding = $customer->loans->sum(function ($loan) {
+        // Debt factor
+        $totalDebt = $customer->loans->sum(function ($loan) {
             return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
         });
-        
-        $monthlyIncome = $customer->income ?? 0;
-        $dtiRatio = $monthlyIncome > 0 ? ($totalOutstanding / $monthlyIncome) * 100 : 100;
-        
-        if ($dtiRatio <= 30) return 300;
-        if ($dtiRatio <= 50) return 200;
-        if ($dtiRatio <= 70) return 100;
-        return 50;
-    }
-    
-    private function calculateHistoryScore($customer)
-    {
-        $firstLoanDate = $customer->loans->min('created_at');
-        if (!$firstLoanDate) return 75;
-        
-        $yearsWithCompany = Carbon::parse($firstLoanDate)->diffInYears(now());
-        
-        if ($yearsWithCompany >= 3) return 150;
-        if ($yearsWithCompany >= 2) return 120;
-        if ($yearsWithCompany >= 1) return 90;
-        return 60;
-    }
-    
-    private function calculateIncomeScore($customer)
-    {
         $income = $customer->income ?? 0;
+        $dtiRatio = $income > 0 ? ($totalDebt / $income) * 100 : 100;
+        if ($dtiRatio <= 30) $score += 100;
+        elseif ($dtiRatio <= 50) $score += 50;
+        elseif ($dtiRatio > 70) $score -= 50;
         
-        if ($income >= 1000000) return 100;
-        if ($income >= 500000) return 80;
-        if ($income >= 250000) return 60;
-        if ($income >= 100000) return 40;
-        return 20;
-    }
-    
-    private function calculateProfileScore($customer)
-    {
-        return $customer->profile_completeness ?? 0;
+        return min(1000, max(0, $score));
     }
 }

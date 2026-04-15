@@ -32,6 +32,11 @@ class PaymentSubmissions extends Model
         'paid_account'
     ];
 
+    protected $casts = [
+        'schedule_id' => 'integer',
+        // ... other casts
+    ];
+
     public function loan()
     {
         return $this->belongsTo(Loans::class, 'loan_number', 'loan_number');
