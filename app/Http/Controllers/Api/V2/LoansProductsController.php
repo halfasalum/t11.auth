@@ -62,7 +62,7 @@ class LoansProductsController extends BaseController
     {
         try {
             $validated = $request->validate([
-                'id' => 'bail|required|exists:loans_products,id',
+                'id' => 'bail|required',
                 'product_name' => 'bail|required|string|max:255',
                 'max_loan_amount' => 'bail|required|numeric|min:1',
                 'min_loan_amount' => 'bail|required|numeric|min:1',
@@ -110,7 +110,7 @@ class LoansProductsController extends BaseController
     {
         try {
             $validated = $request->validate([
-                'id' => 'bail|required|exists:loans_products,id',
+                'id' => 'bail|required',
             ]);
 
             $product = LoansProducts::where('id', $validated['id'])
@@ -140,7 +140,7 @@ class LoansProductsController extends BaseController
     {
         try {
             $validated = $request->validate([
-                'id' => 'bail|required|exists:loans_products,id',
+                'id' => 'bail|required',
             ]);
 
             $product = LoansProducts::where('id', $validated['id'])

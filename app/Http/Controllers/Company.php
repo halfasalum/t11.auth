@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Company as ModelsCompany;
+use App\Models\Modules;
+use App\Models\modules_controls;
 use App\Models\role_permissions;
 use App\Models\Roles;
 use App\Models\User;
@@ -13,7 +15,8 @@ use Illuminate\Support\Facades\Hash;
 
 class Company extends Controller
 {
-    public function register(Request $request){
+    public function register(Request $request)
+    {
         try {
             $validated = $request->validate([
                 'company_name' => 'bail|required|string|max:255',
@@ -47,21 +50,36 @@ class Company extends Controller
             $admin->save();
             $insertedAdminId = $admin->id;
             $roleData = [
-                'role_name' => 'Admin',
+                'role_name' => 'Company Admin',
                 'company'   => $insertedId
             ];
             $role  = Roles::create($roleData);
             $roleId = $role->id;
 
-            $permissions = [7,14,15,16,17,18,21,3,10,29,30,23];
-            foreach($permissions as $permission){
+            $modules = Modules::where('module_status', 1)->get();
+            foreach ($modules as $module) {
+                $controls = modules_controls::where('module_id', $module->id)
+                    ->where('module_control_status', 1)
+                    ->get();
+                foreach ($controls as $control) {
+                    $data = [
+                        'role_id' => $roleId,
+                        'permission_id' => $control->id,
+                        'permission_status' => 1
+                    ];
+                    role_permissions::create($data);
+                }
+            }
+
+            /*  $permissions = [7, 14, 15, 16, 17, 18, 21, 3, 10, 29, 30, 23];
+            foreach ($permissions as $permission) {
                 $data = [
                     'role_id' => $roleId,
                     'permission_id' => $permission,
                     'permission_status' => 1
                 ];
                 role_permissions::create($data);
-            }
+            } */
             $data = [
                 'role_id' => $roleId,
                 'user_id' => $insertedAdminId,
@@ -70,7 +88,7 @@ class Company extends Controller
             users_roles::create($data);
 
             $notification = new Notifications();
-            $message = "Habari, Username yako ni : ".$user. " na password ni : ". $password;
+            $message = "Habari, Username yako ni : " . $user . " na password ni : " . $password;
             $notification->sendSMS($phone, $message);
 
 
@@ -87,10 +105,11 @@ class Company extends Controller
         }
     }
 
-    public function list() {
+    public function list()
+    {
         $companies = ModelsCompany::where('company_status', '!=', 3)
-        ->select('id','company_name','company_phone','company_status','company_email','created_at')
-        ->get();
+            ->select('id', 'company_name', 'company_phone', 'company_status', 'company_email', 'created_at')
+            ->get();
         return response()->json(
             $companies
         );

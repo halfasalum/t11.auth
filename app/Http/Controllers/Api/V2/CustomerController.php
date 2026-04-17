@@ -10,6 +10,7 @@ use App\Models\Attachements;
 use App\Models\Collateral;
 use App\Models\Zone;
 use App\Http\Controllers\Controller;
+use App\Models\Loans;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -715,7 +716,7 @@ class CustomerController extends Controller
             'email' => 'nullable|email|max:255',
             'gender' => 'required',
             'maritual' => 'required',
-            'nida' => 'required|numeric|digits:20',
+            'nida' => 'nullable|numeric|digits:20',
             'address' => 'nullable|string|max:255',
             'city' => 'required',
             'education' => 'required',
@@ -730,9 +731,10 @@ class CustomerController extends Controller
 
     private function findExistingCustomer($validated)
     {
+
         return Customers::where('fullname', 'LIKE', '%' . $validated['fullname'] . '%')
-            ->orWhere('customer_phone', $validated['phone'])
-            ->orWhere('nida', $validated['nida'])
+            ->where('customer_phone', $validated['phone'])
+            ->where('nida', $validated['nida'])
             ->first();
     }
 
@@ -748,7 +750,12 @@ class CustomerController extends Controller
         $validated['employment_type'] = $validated['employment'];
         $validated['date_of_birth'] = $validated['dob'];
         $validated['created_by'] = $userId;
-        $validated['status'] = null; // Status is stored in CustomersZone, not here
+        $validated['nida'] = $validated['nida'] ?? null;
+        $validated['city'] = $validated['city'];
+        $validated['gender'] = $validated['gender'];
+        $validated['experience'] = $validated['experience'];
+
+        //$validated['status'] = null; // Status is stored in CustomersZone, not here
 
         // Handle image upload
         if (isset($validated['customer_image']) && $validated['customer_image'] instanceof \Illuminate\Http\UploadedFile) {
@@ -846,12 +853,12 @@ class CustomerController extends Controller
                 'referee_phone' => 'required|numeric|digits:10',
                 'email' => 'nullable|email|max:255',
                 'gender' => 'required',
-                'nida' => 'required|numeric|digits:20',
+                'nida' => 'nullable|numeric|digits:20',
                 'address' => 'nullable|string|max:255',
                 'city' => 'required',
                 'dob' => 'nullable|date|date_format:Y-m-d',
                 'referee_image' => 'required|image|mimes:jpg,png,jpeg|max:10240',
-                'customer' => 'required|exists:customers,id',
+                'customer' => 'required',
             ]);
 
             $companyId = $this->getCompanyId();
@@ -868,7 +875,7 @@ class CustomerController extends Controller
 
             // Check if referee already exists
             $existingReferee = Referees::where('nida', $validated['nida'])
-                ->orWhere('referee_phone', $validated['referee_phone'])
+                ->where('referee_phone', $validated['referee_phone'])
                 ->first();
 
             DB::beginTransaction();
@@ -965,7 +972,7 @@ class CustomerController extends Controller
         try {
             $validated = $request->validate([
                 'attachment_name' => 'required|string|max:255',
-                'customer' => 'required|exists:customers,id',
+                'customer' => 'required',
                 'attachment' => 'required|file|mimes:jpg,png,jpeg,pdf|max:10240',
             ]);
 
@@ -1034,7 +1041,7 @@ class CustomerController extends Controller
             $validated = $request->validate([
                 'name' => 'required|string|max:255',
                 'value' => 'required|numeric|min:0',
-                'customer' => 'required|exists:customers,id',
+                'customer' => 'required',
             ]);
 
             $companyId = $this->getCompanyId();
@@ -1077,7 +1084,7 @@ class CustomerController extends Controller
     {
         try {
             $validated = $request->validate([
-                'customer' => 'required|exists:customers,id',
+                'customer' => 'required',
             ]);
 
             $companyId = $this->getCompanyId();
@@ -1146,7 +1153,15 @@ class CustomerController extends Controller
                 'income' => $validated['income'],
                 'is_group' => true,
                 'created_by' => $userId,
-                'status' => null,
+                'gender' => 1,
+                'marital_status' => 1,
+                'education_level' => 1,
+                'employment_type' => 1,
+                'experience' => 1,
+                'date_of_birth' => date('Y-m-d'),
+                'customer_image' => 'uploads/customers/avatar.png',
+
+
             ]);
 
             // Create zone assignment
@@ -1524,5 +1539,40 @@ class CustomerController extends Controller
             ]);
             return $this->errorResponse('Failed to delete customer: ' . $e->getMessage(), 500);
         }
+    }
+
+    public function loanFreeCustomers()
+    {
+        $user_zones = $this->getUserZones();
+        //Log::info('zonesId data: ', $user_zones);
+        if (sizeof($user_zones) > 0) {
+
+            foreach ($user_zones as $zone) {
+                $customerData = Customers::select('customers.fullname', 'customers.id')
+                    ->join('customers_zones', 'customers.id', '=', 'customers_zones.customer_id')
+                    ->where('customers_zones.zone_id', $zone)
+                    ->where('customers_zones.status', 1)
+                    //add where condition to filter only active customers
+                    ->where('customers_zones.company_id', $this->getCompanyId())
+                    ->get();
+
+                if (sizeof($customerData) > 0) {
+                    foreach ($customerData as $customer) {
+                        $freeLoanCustomer = Loans::where('customer', [$customer->id])
+                            ->whereIn('status', [4, 5, 7, 8, 12])
+                            ->get();
+                        if (sizeof($freeLoanCustomer) == 0) {
+                            $customers[] = $customer;
+                        }
+                    }
+                }
+            }
+        }
+
+        return response()->json(
+            //["zones"=>$user_zones]
+            $customers
+            //$customerData
+        );
     }
 }

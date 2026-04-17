@@ -22,7 +22,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
-class LoanPaymentsController extends BaseController
+class LoanPaymentsControllerBK extends BaseController
 {
     /**
      * Main payments dashboard data

@@ -14,40 +14,43 @@ class JwtMiddleware
 {
     /**
      * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
     public function handle(Request $request, Closure $next): Response
     {
+        $newToken = null;
+        
         try {
-            /* $token = $request->header('Authorization');
-            response()->json(['sample' => $token], 200);
-            JWTAuth::setToken(str_replace('Bearer ', '', $token))->authenticate(); */
             JWTAuth::parseToken()->authenticate();
         } catch (TokenExpiredException $e) {
             try {
                 // Refresh the token if it has expired
                 $newToken = JWTAuth::refresh(JWTAuth::getToken());
-                // Add the new token to the response headers
-                return response()->json(['message' => 'Token refreshed'])
-                    ->header('Authorization', 'Bearer ' . $newToken);
+                // Set the new token for the current request
+                JWTAuth::setToken($newToken);
+                $request->headers->set('Authorization', 'Bearer ' . $newToken);
             } catch (Exception $refreshException) {
-                return response()->json(['message' => "Token has expired and cannot be refreshed : ".$refreshException->getMessage()], 401);
+                return response()->json([
+                    'message' => 'Token has expired and cannot be refreshed: ' . $refreshException->getMessage()
+                ], 401);
             }
-            return response()->json(['message' => 'Token has expired'], 401);
         } catch (TokenInvalidException $e) {
             return response()->json(['message' => 'Invalid token'], 401);
-        } /* catch (Exception $e) {
-            return response()->json(['error' => 'Token not found'], 401);
-        } */ catch (Exception $e) {
+        } catch (Exception $e) {
             return response()->json(['message' => $e->getMessage()], 401);
         }
-        // Proceed with the request if the token is valid
+        
+        // Proceed with the request
         $response = $next($request);
-        if (isset($newToken)) {
+        
+        // Add the new token to response headers if it was refreshed
+        if ($newToken) {
             $response->headers->set('Authorization', 'Bearer ' . $newToken);
+            // Also add to response body for frontend to capture
+            $content = json_decode($response->getContent(), true) ?? [];
+            $content['refreshed_token'] = $newToken;
+            $response->setContent(json_encode($content));
         }
-        //return $next($request);
+        
         return $response;
     }
 }

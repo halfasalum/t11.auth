@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Carbon\Carbon;
 use App\Http\Controllers\Api\V2\BaseController;
+use App\Http\Controllers\BankController;
+use App\Models\Accounts;
 use App\Models\Collateral;
 use DateTime;
 use Illuminate\Support\Facades\Log;
@@ -270,8 +272,8 @@ class LoanController extends BaseController
     {
         try {
             $validated = $request->validate([
-                'product_id'       => 'required|exists:loans_products,id',
-                'customer_id'      => 'required|exists:customers,id',
+                'product_id'       => 'required',
+                'customer_id'      => 'required',
                 'principal_amount' => 'required|numeric|min:1',
                 'loan_period'      => 'required|numeric|min:1',
                 'attachment'       => 'required|file|mimes:jpg,png,jpeg,pdf|max:10240',
@@ -321,7 +323,7 @@ class LoanController extends BaseController
             $loan = Loans::create([
                 'loan_number'       => $loanNumber,
                 'product'           => $product->id,
-                'customer'          => $customerZone->id,  // This stores customers_zones.id
+                'customer'          => $customerZone->customer_id,  // This stores customers_zones.id
                 'principal_amount'  => $validated['principal_amount'],
                 'interest_amount'   => $interestAmount,
                 'total_loan'        => $totalLoan,
@@ -356,11 +358,13 @@ class LoanController extends BaseController
             $validated = $request->validate([
                 'start_date' => 'required|date|date_format:Y-m-d',
                 'end_date'   => 'required|date|date_format:Y-m-d|after:start_date',
+                'funding_account_id' => 'required|integer',
+                'remarks' => 'nullable|string|max:255',
             ]);
 
             $companyId = $this->getCompanyId();
 
-            $loanModel = Loans::where('loan_number', $loan)
+            $loanModel = Loans::where('id', $loan)
                 ->where('company', $companyId)
                 ->where('status', Loans::STATUS_SUBMITTED)
                 ->first();
@@ -369,16 +373,37 @@ class LoanController extends BaseController
                 return $this->errorResponse('Loan not found or not in pending status', 404);
             }
 
+            $fundingAccount = Accounts::where('id', $validated['funding_account_id'])
+                ->where('company_id', $companyId)
+                ->where('account_status', 1)
+                ->first();
+
+            if (!$fundingAccount) {
+                return $this->errorResponse('Funding account not found or not active', 404);
+            }
+
+            if ($fundingAccount->account_balance < $loanModel->principal_amount) {
+                $shortfall = $loanModel->principal_amount - $fundingAccount->account_balance;
+                return $this->errorResponse(
+                    'Insufficient funds in the selected account. ' .
+                        'Available: ' . $this->formatCurrency($fundingAccount->account_balance) .
+                        ', Required: ' . $this->formatCurrency($loanModel->principal_amount) .
+                        ', Shortfall: ' . $this->formatCurrency($shortfall),
+                    422,
+                    ['shortfall' => $shortfall]
+                );
+            }
+
             $zone = Zone::findOrFail($loanModel->zone);
             $branch = Branch::findOrFail($zone->branch);
 
-            if ($loanModel->principal_amount > $branch->balance) {
+            /* if ($loanModel->principal_amount > $branch->balance) {
                 return $this->errorResponse('Branch has insufficient balance. Please allocate fund', 422);
-            }
+            } */
 
             $installments = $this->generateInstallmentSchedule($loanModel, $validated['start_date'], $validated['end_date']);
 
-            DB::transaction(function () use ($loanModel, $installments, $validated, $branch) {
+            DB::transaction(function () use ($loanModel, $installments, $validated, $branch, $fundingAccount) {
                 foreach ($installments as $inst) {
                     LoanPaymentSchedules::create([
                         'loan_number'              => $loanModel->loan_number,
@@ -399,7 +424,9 @@ class LoanController extends BaseController
                     'status'     => Loans::STATUS_ACTIVE,
                 ]);
 
-                $branch->decrement('balance', $loanModel->principal_amount);
+                //$branch->decrement('balance', $loanModel->principal_amount);
+                $bankController = new BankController();
+                $bankController->disburseLoan($loanModel->id, $fundingAccount->id, $validated['remarks']);
             });
 
             $this->userLogService->log('Approve', "Approve loan: {$loanModel->loan_number}", $this->getUserId(), $companyId);
@@ -701,6 +728,7 @@ class LoanController extends BaseController
 
         // Get customer details
         $customer = $loan->loan_customer;
+        Log::info('customer' . $customer);
 
         // Get product details
         $product = $loan->loan_product;
@@ -880,7 +908,7 @@ class LoanController extends BaseController
         try {
             $validated = $request->validate([
                 'start_date' => 'required|date|date_format:Y-m-d',
-                'loan_id' => 'required|integer|exists:loans,id'
+                'loan_id' => 'required|integer'
             ]);
 
             $user = $this->getUserId();

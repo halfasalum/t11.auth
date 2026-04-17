@@ -20,7 +20,7 @@ use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
-class LoanPaymentsController extends BaseController
+class LoanPaymentsControllerog extends BaseController
 {
     /**
      * Get today's payments (for Today's Payments tab)
@@ -469,7 +469,7 @@ class LoanPaymentsController extends BaseController
                 );
 
                 // Register bank transaction if amount > 0
-                /* if ($payment['amount'] > 0 && !empty($payment['account_id'])) {
+                if ($payment['amount'] > 0 && !empty($payment['account_id'])) {
                     $bank->registerTransaction(
                         $payment['account_id'],
                         $payment['amount'],
@@ -482,7 +482,7 @@ class LoanPaymentsController extends BaseController
                         $payment['customer'],
                         $schedule->id
                     );
-                } */
+                }
 
                 // Create loan payment record
                 LoanPayments::create([
@@ -670,33 +670,6 @@ class LoanPaymentsController extends BaseController
 
             DB::beginTransaction();
 
-            $paymentsLists = PaymentSubmissions::where('submission_status', 8)
-                ->where('branch', $validated['branch'])
-                ->whereHas('schedule', function ($query) use ($validated) {
-                    $query->where('payment_due_date', $validated['payment_date']);
-                })->get();
-            if (sizeof($paymentsLists) > 0) {
-                $bank = new BankController();
-                foreach ($paymentsLists as $payment) {
-                    if ($payment['amount'] > 0 && !empty($payment['paid_account'])) {
-                        $schedule = LoanPaymentSchedules::where('id', $payment['schedule_id'])->first();
-                        $loanData = Loans::where('loan_number', $schedule['loan_number'])->first();
-                        $bank->registerTransaction(
-                            $payment['paid_account'],
-                            $payment['amount'],
-                            true,
-                            $schedule->payment_due_date,
-                            false,
-                            $payment['branch'],
-                            $payment['zone'],
-                            $payment['loan_number'],
-                            $loanData['customer'],
-                            $schedule->id
-                        );
-                    }
-                }
-            }
-
             // Update to final approval status (11)
             $updated = PaymentSubmissions::where('submission_status', 8)
                 ->where('branch', $validated['branch'])
@@ -704,8 +677,6 @@ class LoanPaymentsController extends BaseController
                     $query->where('payment_due_date', $validated['payment_date']);
                 })
                 ->update(['submission_status' => 11]);
-
-
 
             // Update loan balances
             $this->updateLoanBalances($validated['branch'], $validated['payment_date']);
@@ -725,73 +696,6 @@ class LoanPaymentsController extends BaseController
             Log::error('Branch approval error: ' . $e->getMessage());
 
             return $this->errorResponse('Failed to approve branch payments: ' . $e->getMessage(), 500);
-        }
-    }
-
-
-    /**
-     * Update loan balances after approval
-     */
-    private function updateLoanBalances(int $branchId, string $paymentDate): void
-    {
-        $approvedPayments = PaymentSubmissions::where('submission_status', 11)
-            ->where('branch', $branchId)
-            ->whereHas('schedule', function ($query) use ($paymentDate) {
-                $query->where('payment_due_date', $paymentDate);
-            })
-            ->with(['loan'])
-            ->get();
-
-        foreach ($approvedPayments as $payment) {
-            if ($payment->amount == 0) {
-                $this->updateLoanPenalty($payment->schedule_id, $payment->loan_number);
-            }
-
-            // Update loan payment record
-            LoanPayments::where('loan_number', $payment->loan_number)
-                ->where('schedule_id', $payment->schedule_id)
-                ->where('branch', $branchId)
-                ->where('payment_date', $paymentDate)
-                ->update(['status' => 11]);
-
-            // Update loan paid amount
-            $loan = Loans::where('loan_number', $payment->loan_number)->first();
-            if ($loan) {
-                $newPaidAmount = ($loan->loan_paid ?? 0) + $payment->amount;
-                $loan->update(['loan_paid' => $newPaidAmount]);
-
-                // Check if loan is completed
-                $totalDue = $loan->total_loan + ($loan->penalty_amount ?? 0);
-                if ($newPaidAmount >= $totalDue) {
-                    $loan->update(['status' => Loans::STATUS_COMPLETED]);
-                }
-            }
-        }
-    }
-
-    /**
-     * Update loan penalty
-     */
-    private function updateLoanPenalty(int $scheduleId, string $loanNumber): void
-    {
-        $schedule = LoanPaymentSchedules::find($scheduleId);
-        $loan = Loans::where('loan_number', $loanNumber)->with('loan_product')->first();
-
-        if ($schedule && $loan && $loan->loan_product) {
-            $product = $loan->loan_product;
-            $penaltyAmount = 0;
-
-            if ($product->penalty_type == 1) {
-                $penaltyAmount = $product->fixed_penalty_amount ?? 0;
-            } else {
-                $penaltyAmount = (($product->penalty_percentage ?? 0) * $loan->principal_amount) / 100;
-            }
-
-            $schedule->update(['penalty_amount' => $penaltyAmount]);
-
-            $loan->update([
-                'penalty_amount' => ($loan->penalty_amount ?? 0) + $penaltyAmount
-            ]);
         }
     }
 

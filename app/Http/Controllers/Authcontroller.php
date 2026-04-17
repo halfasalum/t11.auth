@@ -8,7 +8,6 @@ use App\Models\role_permissions;
 use App\Models\User;
 use App\Models\users_roles;
 use App\Models\ZoneUser;
-//use App\Services\AIAssistantService;
 use App\Services\UserLogService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
@@ -16,6 +15,7 @@ use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Exception;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
+use Tymon\JWTAuth\Exceptions\TokenInvalidException;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use DateTimeImmutable;
@@ -23,123 +23,191 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 
 class Authcontroller extends Controller
 {
-   /*  protected $aiService;
-
-    public function __construct(AIAssistantService $aiService)
-    {
-        $this->aiService = $aiService;
-    } */
-
     public function login(Request $request, UserLogService $userLogService)
     {
-        $username = $request->username;
-        $password = $request->password;
-        $language = $request->language ?? 'en';
-        $controls = [];
-        $unique_controls = [];
-        $branches = [];
-        $branchesId = [];
-        $zones = [];
-        $zonesId = [];
-        $user = User::where('name', $username)->first();
-        if ($user && Hash::check($password, $user->password)) {
-            // Generate a JWT token for the authenticated user
-            $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
-                ->select('role_id')
-                ->get();
-            if (sizeof($roles) > 0) {
-                foreach ($roles as $role) {
-                    $role_permissions = role_permissions::where(['role_id' => $role->role_id, 'permission_status' => 1])
-                        ->select('permission_id')
-                        ->get();
-                    if (sizeof($role_permissions) > 0) {
-                        foreach ($role_permissions as $permission) {
-                            if (!in_array($permission->permission_id, $controls)) {
-                                $controls[] = $permission->permission_id;
+        try {
+            $username = $request->username;
+            $password = $request->password;
+            $language = $request->language ?? 'en';
+            $controls = [];
+            $unique_controls = [];
+            $branches = [];
+            $branchesId = [];
+            $zones = [];
+            $zonesId = [];
+            
+            $user = User::where('name', $username)->first();
+            
+            if ($user && Hash::check($password, $user->password)) {
+                // Check if password needs change
+                $needsPasswordChange = false;
+                if ($user->password_changed_at === null) {
+                    $needsPasswordChange = true;
+                } elseif ($user->password_expiry_date && now()->gt($user->password_expiry_date)) {
+                    $needsPasswordChange = true;
+                }
+                
+                // Generate refresh token
+                $refreshToken = bin2hex(random_bytes(32));
+                $refreshTokenExpiry = now()->addDays(30);
+                
+                $user->refresh_token = $refreshToken;
+                $user->refresh_token_expiry = $refreshTokenExpiry;
+                $user->save();
+                
+                // Get roles and permissions
+                $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
+                    ->select('role_id')
+                    ->get();
+                    
+                if (sizeof($roles) > 0) {
+                    foreach ($roles as $role) {
+                        $role_permissions = role_permissions::where(['role_id' => $role->role_id, 'permission_status' => 1])
+                            ->select('permission_id')
+                            ->get();
+                        if (sizeof($role_permissions) > 0) {
+                            foreach ($role_permissions as $permission) {
+                                if (!in_array($permission->permission_id, $controls)) {
+                                    $controls[] = $permission->permission_id;
+                                }
                             }
-                            //$controls[] = $permission->permission_id;
                         }
-                        //$unique_controls = array_unique($controls);
                     }
                 }
-            }
-            $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
-                ->select('branches.id', 'branch_name')
-                ->join('branches', 'branches.id', '=', 'branch_users.branch_id')
-                ->where('branches.status', 1)
-                ->get();
-            if (sizeof($branchesData) > 0) {
-                foreach ($branchesData as $branch) {
-                    $branches[] = $branch->branch_name;
-                    $branchesId[] = $branch->id;
+                
+                // Get branches
+                $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
+                    ->select('branches.id', 'branch_name')
+                    ->join('branches', 'branches.id', '=', 'branch_users.branch_id')
+                    ->where('branches.status', 1)
+                    ->get();
+                    
+                if (sizeof($branchesData) > 0) {
+                    foreach ($branchesData as $branch) {
+                        $branches[] = $branch->branch_name;
+                        $branchesId[] = $branch->id;
+                    }
                 }
-            }
-            $zonesData = ZoneUser::where(['user_id' => $user->id, 'zone_users.status' => 1])
-                ->select('zones.id', 'zone_name')
-                ->join('zones', 'zones.id', '=', 'zone_users.zone_id')
-                ->where('zones.status', 1)
-                ->get();
-            if (sizeof($zonesData) > 0) {
-                foreach ($zonesData as $zone) {
-                    $zones[] = $zone->zone_name;
-                    $zonesId[] = $zone->id;
+                
+                // Get zones
+                $zonesData = ZoneUser::where(['user_id' => $user->id, 'zone_users.status' => 1])
+                    ->select('zones.id', 'zone_name')
+                    ->join('zones', 'zones.id', '=', 'zone_users.zone_id')
+                    ->where('zones.status', 1)
+                    ->get();
+                    
+                if (sizeof($zonesData) > 0) {
+                    foreach ($zonesData as $zone) {
+                        $zones[] = $zone->zone_name;
+                        $zonesId[] = $zone->id;
+                    }
                 }
+                
+                $company = Company::where('id', $user->user_company)->first();
+                $financial = $this->generateFinancialYearDate($company->financial_year_start);
+                
+                // Generate JWT token
+                $token = JWTAuth::claims([
+                    'controls' => $controls,
+                    'user_id' => $user->id,
+                    'company' => $user->user_company,
+                    'branches' => $branches,
+                    'zones' => $zones,
+                    'branchesId' => $branchesId,
+                    'zonesId' => $zonesId,
+                    'company_phone' => $company->company_phone,
+                    "company_name" => $company->company_name,
+                    "f_start_date" => $financial['start_date'],
+                    "f_end_date" => $financial['end_date'],
+                    'name'  => $user->first_name . " - " . $user->last_name,
+                ])->fromUser($user);
+
+                $userLogService->log('login', null, $user->id, $user->user_company);
+                
+                return response()->json([
+                    'token' => $token,
+                    'refresh_token' => $refreshToken,
+                    'name' => $user->first_name . " - " . $user->last_name,
+                    'company' => $company->company_name,
+                    'success' => true,
+                    'permissions' => $controls,
+                    'branches' => $branches,
+                    'zones' => $zones,
+                    'branchesId' => $branchesId,
+                    'zonesId' => $zonesId,
+                    'message' => 'Login successful',
+                    'needs_password_change' => $needsPasswordChange,
+                    'expires_in' => config('jwt.ttl') * 60,
+                ]);
+            } else {
+                return response()->json([
+                    'token' => null,
+                    'name' => $username,
+                    'success' => false,
+                    'message' => 'Invalid credentials',
+                ], 401);
             }
-            $company = Company::where('id', $user->user_company)->first();
-            $financial = $this->generateFinancialYearDate($company->financial_year_start);
-            //$token = JWTAuth::fromUser($user, ['controls' => $controls]);
-            $token = JWTAuth::claims([
-                'controls' => $controls,
-                'user_id' => $user->id,
-                'company' => $user->user_company,
-                'branches' => $branches,
-                'zones' => $zones,
-                'branchesId' => $branchesId,
-                'zonesId' => $zonesId,
-                'company_phone' => $company->company_phone,
-                "company_name" => $company->company_name,
-                "f_start_date" => $financial['start_date'],
-                "f_end_date" => $financial['end_date'],
-                'name'  => $user->first_name  . " - " . $user->last_name,
-            ])->fromUser($user);
-
-            $userLogService->log('login', null, $user->id, $user->user_company);
+        } catch (Exception $e) {
+            Log::error('Login error: ' . $e->getMessage());
             return response()->json([
-                'token'     => $token,
-                'name'  => $user->first_name  . " - " . $user->last_name,
-                'company' => $company->company_name,
-                'success'   => true,
-                'permissions' => $controls,
-                'branches' => $branches,
-                'zones' => $zones,
-                'branchesId' => $branchesId,
-                'zonesId' => $zonesId,
-                'message' => 'Login successful',
-            ]);
-        } else {
-            //$aiExplanation = $this->aiService->explainFailure('AUTH_INVALID_CREDENTIALS', 'User', $language);
-
-            return response()->json([
-                'token' => null,
-                'name' => $username,
                 'success' => false,
-                'message' => 'Invalid credentials',
-                //'ai_explanation' => $aiExplanation
-            ], 401);
+                'message' => 'Login failed: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
-
-    public function refresh()
+    public function refresh(Request $request)
     {
         try {
-            // Attempt to refresh the token
-            $newToken = JWTAuth::refresh();
-
-            // Get the authenticated user
-            $user = JWTAuth::user();
-
-            // Fetch user permissions, branches, and company details (similar to login)
+            Log::info('=== REFRESH TOKEN START ===');
+            
+            // Try to get refresh token from request
+            $refreshToken = $request->refresh_token ?? $request->header('X-Refresh-Token');
+            
+            if (!$refreshToken) {
+                // Fallback to old method - try to refresh JWT directly
+                try {
+                    $newToken = JWTAuth::refresh();
+                    $user = JWTAuth::setToken($newToken)->authenticate();
+                } catch (\Exception $e) {
+                    Log::error('No refresh token provided and JWT refresh failed: ' . $e->getMessage());
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Refresh token required',
+                    ], 401);
+                }
+            } else {
+                // Find user by refresh token
+                $user = User::where('refresh_token', $refreshToken)
+                    ->where('refresh_token_expiry', '>', now())
+                    ->first();
+                
+                if (!$user) {
+                    Log::error('Invalid or expired refresh token');
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid or expired refresh token',
+                    ], 401);
+                }
+                
+                // Generate new JWT token
+                $newToken = JWTAuth::fromUser($user);
+                
+                // Generate new refresh token
+                $newRefreshToken = bin2hex(random_bytes(32));
+                $user->refresh_token = $newRefreshToken;
+                $user->refresh_token_expiry = now()->addDays(30);
+                $user->save();
+                
+                Log::info('Token refreshed successfully for user: ' . $user->id);
+                
+                // Return new refresh token as well
+                $responseData = [
+                    'refresh_token' => $newRefreshToken,
+                ];
+            }
+            
+            // Fetch user permissions, branches, and company details
             $controls = [];
             $branches = [];
             $zones = [];
@@ -186,8 +254,9 @@ class Authcontroller extends Controller
             $company = Company::where('id', $user->user_company)->first();
             $financial = $this->generateFinancialYearDate($company->financial_year_start);
 
-            // Return the new token with user data
-            return response()->json([
+            Log::info('=== REFRESH TOKEN SUCCESS ===');
+
+            $response = [
                 'token' => $newToken,
                 'name' => $user->first_name . " - " . $user->last_name,
                 'company' => $company->company_name,
@@ -201,62 +270,56 @@ class Authcontroller extends Controller
                 'f_start_date' => $financial['start_date'],
                 'f_end_date' => $financial['end_date'],
                 'message' => 'Token refreshed successfully',
-            ]);
+                'expires_in' => config('jwt.ttl') * 60,
+            ];
+            
+            if (isset($responseData)) {
+                $response = array_merge($response, $responseData);
+            }
+            
+            return response()->json($response);
+            
+        } catch (TokenExpiredException $e) {
+            Log::error('REFRESH ERROR - TokenExpiredException: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Token has expired. Please login again.',
+                'code' => 'token_expired'
+            ], 401);
+        } catch (TokenInvalidException $e) {
+            Log::error('REFRESH ERROR - TokenInvalidException: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Token is invalid. Please login again.',
+                'code' => 'token_invalid'
+            ], 401);
         } catch (JWTException $e) {
+            Log::error('REFRESH ERROR - JWTException: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Could not refresh token: ' . $e->getMessage(),
+                'code' => 'jwt_exception'
             ], 401);
-        }
-    }
-
-    public function default_admin()
-    {
-
-        $user = User::where('name', 'admin')->first();
-        if (!$user) {
-            // Create the default admin user
-            $admin = new User();
-            $admin->name = 'admin';
-            $admin->first_name = 'admin';
-            $admin->middle_name = 'admin';
-            $admin->last_name = 'admin';
-            $admin->phone = '255657183285'; // Provide a default phone number
-            $admin->super_admin = 1; // Set super_admin to true
-            $admin->user_company = 0; // Set user_company to 0
-            $admin->password = Hash::make('admin'); // Hash the password 'admin'
-            $admin->email = 'ahbabrasul@icloud.com';    // Provide a default email
-            $admin->save();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Default admin account created successfully.',
-            ]);
-        } else {
+        } catch (Exception $e) {
+            Log::error('REFRESH ERROR - General Exception: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
-                'message' => 'Admin account already exists.',
-            ]);
+                'message' => 'Failed to refresh token: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
     public function logout(UserLogService $userLogService)
     {
         try {
-            // Invalidate the token
             $token = JWTAuth::getToken();
             if ($token) {
                 try {
                     $userLogService->log('logout');
                     JWTAuth::invalidate($token);
                 } catch (TokenExpiredException $e) {
-                    // Token is already expired, consider it a successful logout
+                    // Token already expired, nothing to invalidate
                 }
-            } else {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Token not provided',
-                ]);
             }
 
             return response()->json([
@@ -266,46 +329,66 @@ class Authcontroller extends Controller
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to logout, please try again. : ' . $e,
+                'message' => 'Failed to logout: ' . $e->getMessage(),
             ], 500);
         }
     }
 
-    /* public function generateFinancialYearDate($startMonth = 1)
+    public function changePassword(Request $request)
     {
-        $today = date('Y-m-d');
-        $year = date('Y');
-        $month = date('n'); // Numeric representation of a month without leading zeros (1 to 12)
-
-        if ($month < $startMonth) {
-            $startYear = $year - 1;
-            $endYear = $year;
-        } else {
-            $startYear = $year;
-            $endYear = $year + 1;
+        try {
+            $validated = $request->validate([
+                'current_password' => 'required|string',
+                'new_password' => 'required|string|min:8|confirmed',
+            ]);
+            
+            $user = JWTAuth::parseToken()->authenticate();
+            
+            if (!Hash::check($validated['current_password'], $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Current password is incorrect'
+                ], 422);
+            }
+            
+            $user->password = Hash::make($validated['new_password']);
+            $user->password_changed_at = now();
+            $user->password_expiry_date = now()->addDays(90);
+            $user->save();
+            
+            // Generate new token
+            $newToken = JWTAuth::fromUser($user);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Password changed successfully',
+                'token' => $newToken
+            ]);
+            
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors()
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to change password: ' . $e->getMessage()
+            ], 500);
         }
-
-        $startDate = date('Y-m-d', strtotime("{$startYear}-{$startMonth}-01"));
-        $endDate = date('Y-m-d', strtotime("last day of " . ($startMonth - 1 == 0 ? 12 : $startMonth - 1) . " {$endYear}"));
-
-        return [
-            'start_date' => $startDate,
-            'end_date' => $endDate
-        ];
-    } */
+    }
 
     public function generateFinancialYearDate(int $startMonth = 1): array
     {
-        // Validate start month (1-12)
         if ($startMonth < 1 || $startMonth > 12) {
             throw new InvalidArgumentException('Start month must be between 1 and 12');
         }
 
-        $today = new DateTimeImmutable(); // Use DateTimeImmutable for safer date handling
+        $today = new DateTimeImmutable();
         $currentYear = (int)$today->format('Y');
         $currentMonth = (int)$today->format('n');
 
-        // Determine financial year boundaries
         if ($currentMonth < $startMonth) {
             $startYear = $currentYear - 1;
             $endYear = $currentYear;
@@ -315,10 +398,7 @@ class Authcontroller extends Controller
         }
 
         try {
-            // Create start date (first day of start month)
             $startDate = new DateTimeImmutable(sprintf('%d-%02d-01', $startYear, $startMonth));
-
-            // Create end date (last day of the month before start month in the next year)
             $endMonth = $startMonth - 1 > 0 ? $startMonth - 1 : 12;
             $endDate = (new DateTimeImmutable(sprintf('%d-%02d-01', $endYear, $endMonth)))
                 ->modify('last day of this month');
@@ -333,5 +413,31 @@ class Authcontroller extends Controller
         }
     }
 
-    public function paymentsReceipts() {}
+    public function default_admin()
+    {
+        $user = User::where('name', 'admin')->first();
+        if (!$user) {
+            $admin = new User();
+            $admin->name = 'admin';
+            $admin->first_name = 'admin';
+            $admin->middle_name = 'admin';
+            $admin->last_name = 'admin';
+            $admin->phone = '255657183285';
+            $admin->super_admin = 1;
+            $admin->user_company = 0;
+            $admin->password = Hash::make('admin');
+            $admin->email = 'ahbabrasul@icloud.com';
+            $admin->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Default admin account created successfully.',
+            ]);
+        } else {
+            return response()->json([
+                'success' => false,
+                'message' => 'Admin account already exists.',
+            ]);
+        }
+    }
 }

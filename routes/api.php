@@ -32,19 +32,23 @@ use Tymon\JWTAuth\Exceptions\TokenInvalidException;
 
 Route::prefix('v2')->group(base_path('routes/api_v2.php'));
 
-Route::post("/authenticate",[Authcontroller::class,"login"]);
-Route::get("/admin",[Authcontroller::class,"default_admin"]);
-Route::get("/receipt",[Authcontroller::class,"paymentsReceipts"]);
-Route::get('/payment/generatetoken', [PaymentController::class, 'generateToken']);
-Route::get('/payment/gettoken', [PaymentController::class, 'getToken']);
-Route::get('/loans/disburse', [LoanDisbursementController::class, 'disburse']);
-Route::post("/logout",[Authcontroller::class,"logout"]);
-Route::post("/refresh",[Authcontroller::class,"refresh"]);
-
-Route::get('/send-message', [TestController::class, 'sendMessage']);
+Route::post('/authenticate', [AuthController::class, 'login']);
+Route::post('/refresh', [AuthController::class, 'refresh']);
+Route::post('/logout', [AuthController::class, 'logout'])->middleware('jwt.auth');
+Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('jwt.auth');
+Route::post('/default-admin', [AuthController::class, 'default_admin']);
 
 
-Route::get("/user/roles/{id}", [SystemUsers::class, "getRolePermissons"]);
+//Route::get("/admin", [Authcontroller::class, "default_admin"]);
+//Route::get("/receipt", [Authcontroller::class, "paymentsReceipts"]);
+//Route::get('/payment/generatetoken', [PaymentController::class, 'generateToken']);
+//Route::get('/payment/gettoken', [PaymentController::class, 'getToken']);
+//Route::get('/loans/disburse', [LoanDisbursementController::class, 'disburse']);
+
+//Route::get('/send-message', [TestController::class, 'sendMessage']);
+
+
+//Route::get("/user/roles/{id}", [SystemUsers::class, "getRolePermissons"]);
 
 
 use Illuminate\Support\Facades\Response;
@@ -133,8 +137,10 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':10']);
     Route::get("/user/details/{id}", [SystemUsers::class, "getUserDetails"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::get("/user/allocations/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::get("/roles/user/{id}", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::post("/user/role", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/roles/update", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::post("/user/updateUserPassword", [SystemUsers::class, "updateUserPassword"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::post("/user/updateUserDetails", [SystemUsers::class, "updateUserDetails"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::post("/user/register", [SystemUsers::class, "registerUser"])->middleware([ControlAccessMiddleware::class . ':15'])->middleware([CheckSubscriptionLimits::class . ':users']);
@@ -151,8 +157,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::get("/dashboard/manager", [Dashboard::class, "manager_dashboard"])->middleware([ControlAccessMiddleware::class . ':21']);
     Route::get("/allocation/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::post("/allocationUpdate", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::post("/user/allocations/update", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::get("/branchDetails/{id}", [Branch::class, "branchDetails"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::get("/zoneDetails/{id}", [ZoneController::class, "zoneDetails"])->middleware([ControlAccessMiddleware::class . ':30']);
     Route::post("/zone/update", [ZoneController::class, "update"])->middleware([ControlAccessMiddleware::class . ':30']);
-    
 });

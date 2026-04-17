@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V2\Reports\FinancialReportController;
 use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
 use App\Http\Controllers\BankController;
+use App\Http\Controllers\ExpenseController;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Middleware\CheckSubscriptionLimits;
@@ -97,6 +98,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post("/upload", [CustomerController::class, "registerAttachments"])->middleware([ControlAccessMiddleware::class . ':12']);
         Route::post("/collateral", [CustomerController::class, "registerCollateral"])->middleware([ControlAccessMiddleware::class . ':12']);
         Route::post("/submit", [CustomerController::class, "customerSubmit"])->middleware([ControlAccessMiddleware::class . ':12']);
+        Route::get("/loan-free", [CustomerController::class, "loanFreeCustomers"])->middleware([ControlAccessMiddleware::class . ':7']);
 
         Route::get('/{id}', [CustomerController::class, 'show'])->middleware(ControlAccessMiddleware::class . ':13');
         Route::put('/{id}', [CustomerController::class, 'update'])->middleware(ControlAccessMiddleware::class . ':21');
@@ -130,6 +132,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::prefix('loans')->group(function () {
         // Basic view permissions
         Route::get('/', [LoanController::class, 'index'])->middleware(ControlAccessMiddleware::class . ':7');
+        Route::post('/', [LoanController::class, 'store'])->middleware(ControlAccessMiddleware::class . ':12');
+        Route::post('/register', [LoanController::class, 'store'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/stats', [LoanController::class, 'stats'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/active', [LoanController::class, 'active'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/pending', [LoanController::class, 'pending'])->middleware(ControlAccessMiddleware::class . ':7');
@@ -179,12 +183,12 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/{loanId}/approval-data', [LoanController::class, 'getApprovalData']);
 
         // Approve loan with start date
-        Route::post('/{loanId}/approve', [LoanController::class, 'approveLoan']);
+        //Route::post('/{loanId}/approve', [LoanController::class, 'approveLoan']);
 
         // Reject loan application
-        Route::post('/{loanId}/reject', [LoanController::class, 'rejectLoan']);
+        //Route::post('/{loanId}/reject', [LoanController::class, 'rejectLoan']);
         // Write permissions
-        Route::post('/', [LoanController::class, 'store'])->middleware(ControlAccessMiddleware::class . ':12');
+        
         Route::post('/{loan}/approve', [LoanController::class, 'approve'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/reject', [LoanController::class, 'reject'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/disburse', [LoanController::class, 'disburse'])->middleware(ControlAccessMiddleware::class . ':21');
@@ -205,7 +209,22 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/accounts', [LoanPaymentsController::class, 'listActiveAccounts']);
     });
 
+    // Expense Routes
+    Route::prefix('expenses')->group(function () {
+        Route::get('/', [ExpenseController::class, 'list']);
+        Route::get('/categories', [ExpenseController::class, 'listCategories']);
+        Route::post('/category/register', [ExpenseController::class, 'registerCategory']);
+        Route::post('/category/enable', [ExpenseController::class, 'enableCategory']);
+        Route::post('/category/disable', [ExpenseController::class, 'disableCategory']);
+        Route::post('/register', [ExpenseController::class, 'registerExpense']);
+        Route::get('/users/dropdown', [ExpenseController::class, 'getUsersDropdown']);
+    });
+
+
+
     Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
     Route::get("/bank/active-accounts", [BankController::class, "listActiveAccounts"])->middleware([ControlAccessMiddleware::class . ':9']);
-    Route::post("/bank/register", [BankController::class, "registeriAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::post("/bank/register", [BankController::class, "registerAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::get("/bank/parent-accounts", [BankController::class, "getParentAccounts"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::put('/bank/accounts/{id}', [BankController::class, 'updateAccount'])->middleware([ControlAccessMiddleware::class . ':37']);
 });

@@ -92,7 +92,9 @@ class Customers extends Model
      */
     public function zoneAssignment()
     {
-        return $this->hasOne(CustomersZone::class, 'customer_id', 'id');
+        return $this->hasOne(CustomersZone::class, 'customer_id', 'id')
+        ->where('status', '!=', 3)
+        ->where('status', '!=', 9);
     }
 
     /**

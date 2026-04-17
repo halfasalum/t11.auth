@@ -102,7 +102,7 @@ class SystemUsers extends Controller
                 'middle_name' => 'nullable|string|max:255',
                 'last_name' => 'required|string|max:255',
                 'phone' => 'required|numeric|starts_with:06,07|digits:10|unique:App\Models\User,user_phone',                
-                'email' => 'email|unique:App\Models\User,email',
+                'email' => 'nullable|email|unique:App\Models\User,email',
             ]);
             $username = strtolower($request->first_name . '.' . $request->last_name);
             $existingUser = User::where('name', $username)->first();
