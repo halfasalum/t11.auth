@@ -1643,4 +1643,19 @@ class LoanController extends BaseController
             ], 500);
         }
     }
+
+    public function activeLoansByLoanNumber()
+    {
+
+        $user_company = $this->getCompanyId();
+        $list = [];
+        $loans = Loans::select('loan_number')
+            ->where('company', $user_company)
+            ->where('status', 5)
+            ->get();
+        if (sizeof($loans) > 0) {
+            $list = $loans;
+        }
+        return response()->json($list);
+    }
 }

@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class LoanToken extends Model
 {
      use HasFactory;
-     protected $connection = 'loan_db';
+     
     protected $table = 'loan_sms_token';
     protected $primaryKey = 'id';
     public $timestamps = true;

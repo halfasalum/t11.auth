@@ -6,6 +6,7 @@ use App\Http\Controllers\BankController;
 use App\Models\Accounts;
 use App\Models\Branch;
 use App\Models\Customers;
+use App\Models\CustomersZone;
 use App\Models\LoanPayments;
 use App\Models\LoanPaymentSchedules;
 use App\Models\Loans;
@@ -847,7 +848,7 @@ class LoanPaymentsController extends BaseController
             $userCompany = $this->getCompanyId();
 
             // Query accounts directly instead of calling BankController
-            $accounts = Accounts::where('company', $userCompany)
+            $accounts = Accounts::where('company_id', $userCompany)
                 ->where('account_status', 1)
                 ->select('id', 'account_name')
                 ->orderBy('account_name')
@@ -927,7 +928,7 @@ class LoanPaymentsController extends BaseController
             $userCompany = $this->getCompanyId();
 
             // Query accounts directly instead of calling BankController
-            $accounts = Accounts::where('company', $userCompany)
+            $accounts = Accounts::where('company_id', $userCompany)
                 ->where('account_status', 1)
                 ->select('id', 'account_name')
                 ->orderBy('account_name')
@@ -987,5 +988,85 @@ class LoanPaymentsController extends BaseController
             Log::error('Failed to load unfilled payments: ' . $e->getMessage());
             return $this->errorResponse('Failed to load unfilled payments: ' . $e->getMessage(), 500);
         }
+    }
+
+
+    public function branchPaymentsView($branch = null, $date = null, UserLogService $userLogService)
+    {
+        $user_company = $this->getCompanyId();
+        $user_id = $this->getUserId();
+        $userLogService->log('Access', "Access branch payments view for branch: {$branch} on date: {$date}", $user_id, $user_company);
+
+        // Fetch unfilled schedules for the given branch and date
+        $unfilledSchedules = LoanPaymentSchedules::where([
+            'loan_payment_schedule.branch' => $branch,
+            'loan_payment_schedule.payment_due_date' => $date,
+            'loan_payment_schedule.is_submitted' => true,
+            //'payment_submissions.submission_status' => 8
+        ])
+            ->whereIn('payment_submissions.submission_status', [8, 11])
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->join('payment_submissions', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+            ->where('loans.company', $user_company)
+            ->select('loan_payment_schedule.*', 'payment_submissions.*', 'loans.customer', 'loans.loan_number')
+            ->get();
+
+        // Get customers in that zone
+        $zoneCustomers = CustomersZone::where('customers_zones.branch_id', $branch)
+            ->join('customers', 'customers.id', '=', 'customers_zones.customer_id')
+            ->select('customers.*', 'customers.id as customer_id')
+            ->get()
+            ->keyBy('customer_id'); // To speed up lookups
+
+        // Merge schedule with customer
+        $merged = $unfilledSchedules->map(function ($schedule) use ($zoneCustomers) {
+            $customer = $zoneCustomers->get($schedule->customer);
+            return [
+                'schedule' => $schedule,
+                'customer' => $customer
+            ];
+        });
+
+        return $merged;
+    }
+
+    public function zonePaymentsView($zone = null, $date = null, UserLogService $userLogService)
+    {
+
+        $user_company = $this->getCompanyId();
+        $user_id = $this->getUserId();
+        $userLogService->log('Access', "Access zone payments view for zone: {$zone} on date: {$date}", $user_id, $user_company);
+
+        // Fetch unfilled schedules for the given zone and date
+        $unfilledSchedules = LoanPaymentSchedules::where([
+            'loan_payment_schedule.zone' => $zone,
+            'loan_payment_schedule.payment_due_date' => $date,
+            'loan_payment_schedule.is_submitted' => true,
+            //'payment_submissions.submission_status' => 8
+        ])
+            ->whereIn('payment_submissions.submission_status', [4, 8, 11])
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->join('payment_submissions', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+            ->where('loan_payment_schedule.company', $user_company)
+            ->select('loan_payment_schedule.*', 'payment_submissions.*', 'loans.customer', 'loans.loan_number')
+            ->get();
+
+        // Get customers in that zone
+        $zoneCustomers = CustomersZone::where('customers_zones.zone_id', $zone)
+            ->join('customers', 'customers.id', '=', 'customers_zones.customer_id')
+            ->select('customers.*', 'customers.id as customer_id')
+            ->get()
+            ->keyBy('customer_id'); // To speed up lookups
+
+        // Merge schedule with customer
+        $merged = $unfilledSchedules->map(function ($schedule) use ($zoneCustomers) {
+            $customer = $zoneCustomers->get($schedule->customer);
+            return [
+                'schedule' => $schedule,
+                'customer' => $customer
+            ];
+        });
+
+        return $merged;
     }
 }

@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class LoanPayments extends Model
 {
     use HasFactory;
-    protected $connection = 'loan_db';
+    
     protected $table = 'loan_payments';
     protected $primaryKey = 'id';
     public $timestamps = true;

@@ -8,8 +8,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class Categories extends Model
 {
     use HasFactory;
-
-    protected $connection = 'expense_db';
     protected $table = 'expense_categories';
     protected $primaryKey = 'id';
     public $timestamps = true;

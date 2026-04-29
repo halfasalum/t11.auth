@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class CustomerReferees extends Model
 {
     use HasFactory;
-    protected $connection = 'customers_db';
+    
 
     protected $table = 'refeee_to_customer';
     protected $primaryKey = 'id';

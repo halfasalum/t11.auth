@@ -19,6 +19,7 @@ class Income extends Model
         'registered_by',
         'income_company',
         'income_branch',
-        'income_description'
+        'income_description',
+        'paid_account'
     ];
 }

@@ -44,9 +44,9 @@ class Accounts extends Model
     ];
     
     protected $casts = [
-        'account_balance' => 'decimal:2',
-        'minimum_balance' => 'decimal:2',
-        'maximum_balance' => 'decimal:2',
+        'account_balance' => 'float',
+        'minimum_balance' => 'float',
+        'maximum_balance' => 'float',
         'approved_at' => 'datetime',
     ];
     

@@ -206,7 +206,7 @@ class BankController extends Controller
                 'initial_balance' => 'nullable|numeric|min:0',
                 'minimum_balance' => 'nullable|numeric|min:0',
                 'maximum_balance' => 'nullable|numeric|gt:minimum_balance',
-                'currency' => 'nullable|string|size:3|default:TZS',
+                'currency' => 'nullable|string|size:3',
                 'description' => 'nullable|string|max:500',
                 'parent_account_id' => 'nullable|exists:accounts,id',
             ]);

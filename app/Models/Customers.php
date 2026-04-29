@@ -9,7 +9,7 @@ use Illuminate\Support\Carbon;
 class Customers extends Model
 {
     use HasFactory;
-    protected $connection = 'customers_db';
+    
 
     protected $table = 'customers';
     protected $primaryKey = 'id';

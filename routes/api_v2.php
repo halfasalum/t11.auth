@@ -14,8 +14,17 @@ use App\Http\Controllers\Api\V2\Reports\CustomerReportController;
 use App\Http\Controllers\Api\V2\Reports\FinancialReportController;
 use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
+use App\Http\Controllers\Authcontroller;
 use App\Http\Controllers\BankController;
+use App\Http\Controllers\Branch;
+use App\Http\Controllers\Company;
+use App\Http\Controllers\Dashboard;
 use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\IncomeController;
+use App\Http\Controllers\Modules;
+use App\Http\Controllers\Roles;
+use App\Http\Controllers\SystemUsers;
+use App\Http\Controllers\ZoneController;
 use Illuminate\Support\Facades\Route;
 
 use App\Http\Middleware\CheckSubscriptionLimits;
@@ -23,6 +32,11 @@ use App\Http\Middleware\CheckSubscriptionStatus;
 use App\Http\Middleware\ControlAccessMiddleware;
 use App\Http\Middleware\JwtMiddleware;
 
+
+Route::post('/authenticate', [Authcontroller::class, 'login']);
+Route::post('/refresh', [AuthController::class, 'refresh']);
+Route::post('/logout', [AuthController::class, 'logout'])->middleware('jwt.auth');
+Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('jwt.auth');
 
 // ============================================
 // Protected Routes (require authentication)
@@ -150,6 +164,10 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/payments/previous-approvals', [LoanPaymentsController::class, 'getPreviousApprovalsData']);
         Route::get('/payments/unfilled', [LoanPaymentsController::class, 'getUnfilledPaymentsData']);
         Route::get('/payments/rejected', [LoanPaymentsController::class, 'getRejectedPaymentsData']);
+        Route::get('/payments/view-zone/{zone}/{date}', [LoanPaymentsController::class, 'zonePaymentsView']);
+        Route::get('/payments/view/{branch}/{date}', [LoanPaymentsController::class, 'branchPaymentsView']);
+        Route::get('/payments/unfilled/{zone}/{date}', [LoanPaymentsController::class, 'fetchUnfilledPayments']);
+        Route::get('/payments/rejected/{zone}/{date}', [LoanPaymentsController::class, 'fetchRejectedPayments']);
 
         // Product management
         Route::get('/products', [LoansProductsController::class, 'list'])->middleware(ControlAccessMiddleware::class . ':18');
@@ -170,10 +188,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
         // View endpoints (keep existing)
-        Route::get('/payments/view-zone/{zone}/{date}', [LoanPaymentsController::class, 'zonePaymentsView']);
-        Route::get('/payments/view/{branch}/{date}', [LoanPaymentsController::class, 'branchPaymentsView']);
-        Route::get('/payments/unfilled/{zone}/{date}', [LoanPaymentsController::class, 'fetchUnfilledPayments']);
-        Route::get('/payments/rejected/{zone}/{date}', [LoanPaymentsController::class, 'fetchRejectedPayments']);
+
 
 
 
@@ -188,7 +203,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         // Reject loan application
         //Route::post('/{loanId}/reject', [LoanController::class, 'rejectLoan']);
         // Write permissions
-        
+
         Route::post('/{loan}/approve', [LoanController::class, 'approve'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/reject', [LoanController::class, 'reject'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/disburse', [LoanController::class, 'disburse'])->middleware(ControlAccessMiddleware::class . ':21');
@@ -219,6 +234,62 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/register', [ExpenseController::class, 'registerExpense']);
         Route::get('/users/dropdown', [ExpenseController::class, 'getUsersDropdown']);
     });
+
+    /* Route::prefix('users')->group(function () {
+        Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':10']);
+    }); */
+
+    /* OLD API MIGRATION */
+
+
+    Route::get("/income", [IncomeController::class, "list"])->middleware([ControlAccessMiddleware::class . ':36']);
+    Route::get("/income/active-loans", [LoanController::class, "activeLoansByLoanNumber"])->middleware([ControlAccessMiddleware::class . ':36']);
+    Route::get("/income/categories", [IncomeController::class, "categoryList"])->middleware([ControlAccessMiddleware::class . ':36']);
+    Route::post("/income/category/register", [IncomeController::class, "registeriCategory"])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::post("/income/register", [IncomeController::class, "registerIncome"])->middleware([ControlAccessMiddleware::class . ':37']);
+
+
+    Route::post("/module/register", [Modules::class, "register"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::post("/company/register", [Company::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::get("/companies", [Company::class, "list"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::post("/control/register", [Modules::class, "control_register"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::post("/module-control/register", [Modules::class, "control_register"])->middleware([ControlAccessMiddleware::class . ':11']);
+    Route::get("/modules/list", [Modules::class, "listModules"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/module-controls/{id}", [Modules::class, "getControls"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/modules", [Modules::class, "getModules"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/controls", [Modules::class, "listControls"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/module/permissions", [Modules::class, "getModulesPermissions"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::get("/roles", [Roles::class, "listRoles"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::get("/roles/{id}", [Roles::class, "show"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::post("/roles/register", [Roles::class, "register"])->middleware([ControlAccessMiddleware::class . ':3']);
+    Route::post("/role/update", [Roles::class, "updateRolePermission"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':14']);
+    Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':10']);
+    Route::get("/user/details/{id}", [SystemUsers::class, "getUserDetails"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::get("/user/allocations/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::get("/roles/user/{id}", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/role", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/roles/update", [SystemUsers::class, "registerUserRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/updateUserPassword", [SystemUsers::class, "updateUserPassword"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/updateUserDetails", [SystemUsers::class, "updateUserDetails"])->middleware([ControlAccessMiddleware::class . ':15']);
+    Route::post("/user/register", [SystemUsers::class, "registerUser"])->middleware([ControlAccessMiddleware::class . ':15'])->middleware([CheckSubscriptionLimits::class . ':users']);
+    Route::post("/users/school", [SystemUsers::class, "registerSchoolAdmin"])->middleware([ControlAccessMiddleware::class . ':1']);
+    Route::get("/branches", [Branch::class, "list"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::post("/branch/register", [Branch::class, "register"])->middleware([ControlAccessMiddleware::class . ':29'])->middleware([CheckSubscriptionLimits::class . ':branches']);
+    Route::post("/branch/update", [Branch::class, "update"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::post("/branch/fund", [Branch::class, "fund"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::get("/zones", [ZoneController::class, "list"])->middleware([ControlAccessMiddleware::class . ':30']);
+    Route::get("/user/zones", [ZoneController::class, "getUserAssignedZones"])->middleware([ControlAccessMiddleware::class . ':12']);
+    Route::post("/zone/register", [ZoneController::class, "register"])->middleware([ControlAccessMiddleware::class . ':30'])->middleware([CheckSubscriptionLimits::class . ':zones']);
+    Route::get("/dashboard/officer", [Dashboard::class, "officer_dashboard"])->middleware([ControlAccessMiddleware::class . ':19']);
+    Route::get("/dashboard/branch", [Dashboard::class, "branch_dashboard"])->middleware([ControlAccessMiddleware::class . ':20']);
+    Route::get("/dashboard/manager", [Dashboard::class, "manager_dashboard"])->middleware([ControlAccessMiddleware::class . ':21']);
+    Route::get("/allocation/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::post("/allocationUpdate", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::post("/user/allocations/update", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::get("/branchDetails/{id}", [Branch::class, "branchDetails"])->middleware([ControlAccessMiddleware::class . ':29']);
+    Route::get("/zoneDetails/{id}", [ZoneController::class, "zoneDetails"])->middleware([ControlAccessMiddleware::class . ':30']);
+    Route::post("/zone/update", [ZoneController::class, "update"])->middleware([ControlAccessMiddleware::class . ':30']);
 
 
 

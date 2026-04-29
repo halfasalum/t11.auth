@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class ServicesModel extends Model
 {
     use HasFactory;
-    protected $connection = 'auth_db';
     protected $table = 'services';
     protected $primaryKey = 'id';
     public $timestamps = true;

@@ -20,7 +20,7 @@ class Loans extends Model
     public const STATUS_OVERDUE = 12;
     public const STATUS_REJECTED = 9;
 
-    protected $connection = 'loan_db';
+    
     protected $table = 'loans';
     protected $primaryKey = 'id';
     public $timestamps = true;

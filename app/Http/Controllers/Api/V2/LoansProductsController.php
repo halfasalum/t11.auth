@@ -116,11 +116,11 @@ class LoansProductsController extends BaseController
             $product = LoansProducts::where('id', $validated['id'])
                 ->where('company', $this->getCompanyId())
                 ->first();
-            
+
             if (!$product) {
                 return $this->errorResponse('Loan product not found or does not belong to your company.', 404);
             }
-            
+
             $product->status = 1; // Enable the product
             $product->save();
 
@@ -146,11 +146,11 @@ class LoansProductsController extends BaseController
             $product = LoansProducts::where('id', $validated['id'])
                 ->where('company', $this->getCompanyId())
                 ->first();
-            
+
             if (!$product) {
                 return $this->errorResponse('Loan product not found or does not belong to your company.', 404);
             }
-            
+
             $product->status = 2; // Disable the product
             $product->save();
 
@@ -172,7 +172,7 @@ class LoansProductsController extends BaseController
             $products = LoansProducts::where('status', '!=', 3)
                 ->where('company', $this->getCompanyId())
                 ->get();
-                
+
             return $this->successResponse($products, 'Products retrieved successfully');
         } catch (\Exception $e) {
             Log::error('Failed to list products: ' . $e->getMessage());
@@ -189,7 +189,7 @@ class LoansProductsController extends BaseController
             $products = LoansProducts::where('status', 1)
                 ->where('company', $this->getCompanyId())
                 ->get();
-                
+
             return $this->successResponse($products, 'Active products retrieved successfully');
         } catch (\Exception $e) {
             Log::error('Failed to list active products: ' . $e->getMessage());
@@ -205,19 +205,22 @@ class LoansProductsController extends BaseController
         try {
             $user_company = $this->getCompanyId();
             $user_id = $this->getUserId();
-            
+
             if ($customer) {
+                Log::info('Customer ID: ' . $customer);
                 $customerData = Customers::where('id', $customer)->first();
+                Log::info('Customer Data: ' . json_encode($customerData));
                 if ($customerData) {
                     $phone = $customerData->phone;
                     $token = rand(111111, 999999);
                     $message = "Habari, tokeni ya mkopo ni $token. \nUsitume tokeni hii kwa mtu yeyote kama hujaomba mkopo.";
-                    
-                    $active_token = LoanToken::where('user', $user_id)
+
+                    $active_token = LoanToken::where('loan_customer', $customerData->id)
                         ->where('status', 1)
                         ->where('company', $user_company)
                         ->first();
-                        
+                    Log::info('Active Token: ' . json_encode($active_token));
+
                     if (!$active_token) {
                         LoanToken::create([
                             'loan_sms' => $message,
@@ -227,19 +230,20 @@ class LoansProductsController extends BaseController
                             'status' => 1,
                             'user' => $user_id,
                         ]);
-                        
+
                         $notification = new Notifications();
                         $notification->sendSMS($phone, $message);
+                        Log::info('Token sent successfully');
                     }
                 }
             }
-            
+
             $product = LoansProducts::where(["id" => $product_id, "company" => $user_company])->first();
-            
+
             if (!$product) {
                 return $this->errorResponse('Product not found', 404);
             }
-            
+
             return $this->successResponse($product, 'Product details retrieved successfully');
         } catch (\Exception $e) {
             Log::error('Failed to retrieve product details: ' . $e->getMessage());

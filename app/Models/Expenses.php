@@ -9,7 +9,7 @@ class Expenses extends Model
 {
     use HasFactory;
 
-    protected $connection = 'expense_db';
+
     protected $table = 'expenses';
     protected $primaryKey = 'id';
     public $timestamps = true;

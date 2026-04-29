@@ -1544,6 +1544,7 @@ class CustomerController extends Controller
     public function loanFreeCustomers()
     {
         $user_zones = $this->getUserZones();
+        $customers = [];
         //Log::info('zonesId data: ', $user_zones);
         if (sizeof($user_zones) > 0) {
 

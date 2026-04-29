@@ -32,11 +32,11 @@ use Tymon\JWTAuth\Exceptions\TokenInvalidException;
 
 Route::prefix('v2')->group(base_path('routes/api_v2.php'));
 
-Route::post('/authenticate', [AuthController::class, 'login']);
-Route::post('/refresh', [AuthController::class, 'refresh']);
-Route::post('/logout', [AuthController::class, 'logout'])->middleware('jwt.auth');
-Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('jwt.auth');
-Route::post('/default-admin', [AuthController::class, 'default_admin']);
+Route::post('/authenticate', [AuthController::class, 'login_']);
+Route::post('/refresh', [AuthController::class, 'refresh_']);
+Route::post('/logout', [AuthController::class, 'logout_'])->middleware('jwt.auth');
+Route::post('/change-password', [AuthController::class, 'changePassword_'])->middleware('jwt.auth');
+Route::post('/default-admin', [AuthController::class, 'default_admin_']);
 
 
 //Route::get("/admin", [Authcontroller::class, "default_admin"]);

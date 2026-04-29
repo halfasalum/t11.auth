@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class LoanPaymentSchedules extends Model
 {
     use HasFactory;
-    protected $connection = 'loan_db';
+
     protected $table = 'loan_payment_schedule';
     protected $primaryKey = 'id';
     public $timestamps = true;
@@ -28,7 +28,15 @@ class LoanPaymentSchedules extends Model
         'overdue_flag'
     ];
 
- 
+    protected $casts = [
+        'payment_due_date' => 'date',
+        'payment_total_amount' => 'decimal:2',
+        'payment_principal_amount' => 'decimal:2',
+        'payment_interest_amount' => 'decimal:2',
+        'penalty_amount' => 'decimal:2',
+    ];
+
+
 
     /**
      * Get the loan associated with this payment schedule

@@ -9,7 +9,7 @@ class Collateral extends Model
 {
     use HasFactory;
 
-    protected $connection = 'customers_db';
+    
     protected $table = 'collateral';
     protected $primaryKey = 'id';
     public $timestamps = true;

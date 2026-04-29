@@ -9,7 +9,7 @@ class Referees extends Model
 {
     use HasFactory;
 
-    protected $connection = 'customers_db';
+    
 
     protected $table = 'referees';
     protected $primaryKey = 'id';

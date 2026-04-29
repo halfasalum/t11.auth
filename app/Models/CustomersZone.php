@@ -8,9 +8,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class CustomersZone extends Model
 {
     use HasFactory;
-    //protected $connection = 'customers_db';
+    
 
-    protected $connection = 'customers_db';
+    
 
     protected $table = 'customers_zones';
     protected $primaryKey = 'id';

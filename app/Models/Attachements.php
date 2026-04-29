@@ -9,7 +9,7 @@ class Attachements extends Model
 {
     use HasFactory;
 
-    protected $connection = 'customers_db';
+    
     protected $table = 'customer_attachments';
     protected $primaryKey = 'id';
     public $timestamps = true;
