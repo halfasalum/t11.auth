@@ -763,4 +763,83 @@ class CollectionReportController extends BaseController
             return $this->errorResponse('Failed to load collection approval status: ' . $e->getMessage(), 500);
         }
     }
+
+    /**
+     * Get payment submission status for a specific loan on a specific date
+     */
+    public function paymentSubmissionStatus(Request $request)
+    {
+        try {
+            $companyId = $this->getCompanyId();
+            $loanNumber = $request->get('loan_number');
+            $date = $request->get('date');
+
+            // Find the schedule for this loan on the given date
+            $schedule = LoanPaymentSchedules::where('loan_number', $loanNumber)
+                ->where('payment_due_date', $date)
+                ->whereHas('loan', function ($q) use ($companyId) {
+                    $q->where('company', $companyId);
+                })
+                ->first();
+
+            if (!$schedule) {
+                return $this->successResponse([
+                    'submission_status' => 0,
+                    'submission_status_label' => 'No Schedule Found',
+                    'submission_status_color' => 'secondary',
+                    'submission_id' => null,
+                    'payment_date' => null,
+                    'collected_amount' => 0
+                ], 'No payment schedule found');
+            }
+
+            // Find payment submission for this schedule
+            $submission = PaymentSubmissions::where('schedule_id', $schedule->id)
+                ->where('company', $companyId)
+                ->first();
+
+            if (!$submission) {
+                return $this->successResponse([
+                    'submission_status' => 0,
+                    'submission_status_label' => 'No Payment Submitted',
+                    'submission_status_color' => 'secondary',
+                    'submission_id' => null,
+                    'payment_date' => null,
+                    'collected_amount' => 0,
+                    'expected_amount' => (float) $schedule->payment_total_amount
+                ], 'No payment submitted');
+            }
+
+            $statusLabels = [
+                4 => 'Pending Zone Approval',
+                8 => 'Pending Branch Approval',
+                9 => 'Rejected',
+                11 => 'Approved',
+            ];
+
+            $statusColors = [
+                4 => 'warning',
+                8 => 'info',
+                9 => 'danger',
+                11 => 'success',
+            ];
+
+            return $this->successResponse([
+                'submission_status' => $submission->submission_status,
+                'submission_status_label' => $statusLabels[$submission->submission_status] ?? 'Unknown',
+                'submission_status_color' => $statusColors[$submission->submission_status] ?? 'secondary',
+                'submission_id' => $submission->id,
+                'payment_date' => $submission->submitted_date,
+                'collected_amount' => (float) $submission->amount,
+                'expected_amount' => (float) $schedule->payment_total_amount,
+                'is_on_time' => $submission->submitted_date && Carbon::parse($submission->submitted_date)->toDateString() === $date,
+                'days_late' => $submission->submitted_date && Carbon::parse($submission->submitted_date)->toDateString() !== $date
+                    ? Carbon::parse($date)->diffInDays(Carbon::parse($submission->submitted_date))
+                    : 0
+            ], 'Payment status retrieved');
+        } catch (\Exception $e) {
+            Log::error('Payment submission status error: ' . $e->getMessage());
+            return $this->errorResponse('Failed to load payment status: ' . $e->getMessage(), 500);
+        }
+    }
 }

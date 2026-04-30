@@ -82,6 +82,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/collection/daily-by-zone', [CollectionReportController::class, 'dailyCollectionByZone']);
         Route::get('/collection/daily-by-branch', [CollectionReportController::class, 'dailyCollectionByBranch']);
         Route::get('/collection/approval-status', [CollectionReportController::class, 'collectionApprovalStatus']);
+        Route::get('/collection/payment-status', [CollectionReportController::class, 'paymentSubmissionStatus']);
 
         // Operational Reports
         Route::get('/operations/expense-analysis', [OperationalReportController::class, 'expenseAnalysis']);
