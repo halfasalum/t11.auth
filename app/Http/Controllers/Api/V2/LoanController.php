@@ -103,7 +103,7 @@ class LoanController extends BaseController
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('loan_number', 'LIKE', "%{$search}%")
-                    ->orWhereHas('customerZone.customer', function ($cq) use ($search) {
+                    ->orWhereHas('loan_customer', function ($cq) use ($search) {
                         $cq->where('fullname', 'LIKE', "%{$search}%")
                             ->orWhere('phone', 'LIKE', "%{$search}%")
                             ->orWhere('customer_phone', 'LIKE', "%{$search}%");
@@ -478,7 +478,7 @@ class LoanController extends BaseController
             return $this->errorResponse('Unauthorized', 403);
         }
 
-        $loanModel = Loans::where('loan_number', $loan)
+        $loanModel = Loans::where('id', $loan)
             ->where('company', $this->getCompanyId())
             ->first();
 
@@ -486,7 +486,7 @@ class LoanController extends BaseController
             return $this->errorResponse('Loan not found', 404);
         }
 
-        if (($loanModel->total_loan + ($loanModel->penalty_amount ?? 0)) > ($loanModel->loan_paid ?? 0)) {
+        if (($loanModel->total_loan) > ($loanModel->loan_paid ?? 0)) {
             return $this->errorResponse('Loan is not fully paid', 422);
         }
 
@@ -494,6 +494,7 @@ class LoanController extends BaseController
 
         LoanPaymentSchedules::where('loan_number', $loan)
             ->where('status', 1)
+            ->where('is_submitted', 0)
             ->update(['status' => 3]);
 
         $this->userLogService->log('Complete', "Mark loan as complete: {$loan}", $this->getUserId(), $this->getCompanyId());
@@ -507,7 +508,7 @@ class LoanController extends BaseController
             return $this->errorResponse('Unauthorized', 403);
         }
 
-        $loanModel = Loans::where('loan_number', $loan)
+        $loanModel = Loans::where('id', $loan)
             ->where('company', $this->getCompanyId())
             ->first();
 
@@ -517,8 +518,9 @@ class LoanController extends BaseController
 
         $loanModel->update(['status' => Loans::STATUS_DEFAULTED]);
 
-        LoanPaymentSchedules::where('loan_number', $loan)
+        LoanPaymentSchedules::where('id', $loan)
             ->where('status', 1)
+            ->where('is_submitted', 0)
             ->update(['status' => 3]);
 
         $this->userLogService->log('Default', "Mark loan as default: {$loan}", $this->getUserId(), $this->getCompanyId());
@@ -1657,5 +1659,24 @@ class LoanController extends BaseController
             $list = $loans;
         }
         return response()->json($list);
+    }
+
+    public function deleteSchedule($scheduleId, UserLogService $userLogService)
+    {
+        $user_company = $this->getCompanyId();
+        $user_id = $this->getUserId();
+        $userLogService->log('Delete', "Delete schedule: {$scheduleId}", $user_id, $user_company);
+
+        $schedule = LoanPaymentSchedules::where('id', $scheduleId)
+            ->where('company', $user_company)
+            ->where('status', 1)
+            ->first();
+        if (!$schedule) {
+            return $this->errorResponse('Schedule not found', 404);
+        }
+
+        $schedule->update(['status' => 3]);
+
+        return $this->successResponse([], 'Schedule deleted successfully');
     }
 }

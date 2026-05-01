@@ -208,9 +208,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/{loan}/approve', [LoanController::class, 'approve'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/reject', [LoanController::class, 'reject'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::post('/{loan}/disburse', [LoanController::class, 'disburse'])->middleware(ControlAccessMiddleware::class . ':21');
-        Route::post('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
-        Route::post('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
-
+        Route::get('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
+        Route::get('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
 
 
 
@@ -218,8 +217,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
         // Schedule management
-        Route::get('/loans/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
-        Route::delete('/loans/deleteSchedule/{scheduleId}', [LoanPaymentsController::class, 'deleteSchedule']);
+        Route::get('/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
+        Route::get('/deleteSchedule/{scheduleId}', [LoanController::class, 'deleteSchedule']);
 
         // Accounts
         Route::get('/accounts', [LoanPaymentsController::class, 'listActiveAccounts']);

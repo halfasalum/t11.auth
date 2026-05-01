@@ -130,14 +130,14 @@ class Dashboard extends BaseController
             ->where('status', 5)
             ->selectRaw('SUM(principal_amount - principal_paid) as total')
             ->value('total');
-        $loansCount = Loans::where('company', $user_company)
+        $loans = Loans::where('company', $user_company)
             ->where('status', 5)
-            ->count();
+            ->get();
 
-        if ($loansCount <= 0) {
+        if (sizeof($loans) <= 0) {
             $total_loan_portfolio_value = 0;
         } else {
-            $average_loan_amount = $total_loan_portfolio_value / $loansCount;
+            $average_loan_amount = $total_loan_portfolio_value / sizeof($loans);
         }
 
 
@@ -211,52 +211,45 @@ class Dashboard extends BaseController
         try {
             $start_date =  $f_start_date;
             $end_date =  $f_end_date;
-            $totalExpesne = Expenses::where('company_id', $user_company)
+            $expenses = Expenses::where('company_id', $user_company)
                 ->where('expense_date', '>=', $start_date)
                 ->where('expense_date', '<=', $end_date)
-                ->sum('amount');
-
+                ->get();
+            $totalExpesne = $expenses->sum('amount');
             $data = [];
-
-            $loanAggregates = Loans::where('company', $user_company)
+            $loans = Loans::where(['company' => $user_company])
                 ->whereIn('status', [5, 6, 7, 12])
                 ->where('start_date', '>=', $start_date)
                 ->where('start_date', '<=', $end_date)
-                ->selectRaw('
-                    COUNT(*) as total_loans,
-                    SUM(principal_amount) as total_principal,
-                    SUM(interest_amount) as total_interest,
-                    SUM(penalty_amount) as total_penalty
-                ')
-                ->first();
-
-            $totalLoans         = $loanAggregates->total_loans ?? 0;
-            $totalLoanPrincipal = $loanAggregates->total_principal ?? 0;
-            $totalLoanInterest  = $loanAggregates->total_interest ?? 0;
-            $totalLoanPenalty   = $loanAggregates->total_penalty ?? 0;
-
-            $paymentsAggregates = LoanSchedules::join('payment_submissions', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
-                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
-                ->where('loans.company', $user_company)
-                ->whereIn('loans.status', [5, 6, 7, 12])
-                ->where('loans.start_date', '>=', $start_date)
-                ->where('loans.start_date', '<=', $end_date)
-                ->where('payment_submissions.submission_status', 11)
-                ->where('loan_payment_schedule.status', 1)
-                ->where('loan_payment_schedule.payment_due_date', '>=', $start_date)
-                ->where('loan_payment_schedule.payment_due_date', '<=', $end_date)
-                ->where('loan_payment_schedule.company', $user_company)
-                ->selectRaw('
-                    SUM(payment_submissions.paid_principal) as total_paid_principal,
-                    SUM(payment_submissions.paid_interest) as total_paid_interest
-                ')
-                ->first();
-
-            $totalPaidPrincipal = $paymentsAggregates->total_paid_principal ?? 0;
-            $totalPaidInterest  = $paymentsAggregates->total_paid_interest ?? 0;
-
+                ->get();
+            $totalLoanPrincipal = 0;
+            $totalLoanInterest  = 0;
+            $totalPaidPrincipal = 0;
+            $totalPaidInterest  = 0;
+            $totalLoanPenalty  = 0;
+            if (sizeof($loans) > 0) {
+                foreach ($loans as $loan) {
+                    $totalLoanPrincipal += $loan->principal_amount;
+                    $totalLoanInterest  += $loan->interest_amount;
+                    $totalLoanPenalty   += $loan->penalty_amount;
+                    $payaments = LoanSchedules::where('loan_payment_schedule.loan_number', $loan->loan_number)
+                        ->join('payment_submissions', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                        ->where('submission_status', 11)
+                        ->where('loan_payment_schedule.status', 1)
+                        ->where('payment_due_date', '>=', $start_date)
+                        ->where('payment_due_date', '<=', $end_date)
+                        ->where('loan_payment_schedule.company', $user_company)
+                        ->get();
+                    if (sizeof($payaments) > 0) {
+                        foreach ($payaments as $payament) {
+                            $totalPaidPrincipal += $payament->paid_principal;
+                            $totalPaidInterest  += $payament->paid_interest;
+                        }
+                    }
+                }
+            }
             $data = [
-                'totalLoans'            => (int) $totalLoans,
+                'totalLoans'            => $loans->count(),
                 'totalLoanPrincipal'    => $totalLoanPrincipal,
                 'totalLoanInterest'     => $totalLoanInterest,
                 'totalPaidPrincipal'    => $totalPaidPrincipal,
@@ -526,41 +519,69 @@ class Dashboard extends BaseController
         $target_yesterady = 0;
         $collected = 0;
 
-        $targetQuery = LoanPaymentSchedules::whereIn('loan_payment_schedule.payment_due_date', [$today, $yesterday])
-            ->where(['loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+        // Get today's target
+        $target = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $today, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
             ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
             ->whereIn('loans.status', [5, 12])
-            ->selectRaw('loan_payment_schedule.payment_due_date, SUM(payment_total_amount) as total')
-            ->groupBy('loan_payment_schedule.payment_due_date');
+            ->when(!empty($zones), function ($query) use ($zones) {
+                $query->whereIn('loan_payment_schedule.zone', $zones);
+            })
+            ->sum('payment_total_amount');
 
-        if (!empty($branches)) {
-            $targetQuery->whereIn('loan_payment_schedule.branch', $branches);
-        } elseif (!empty($zones)) {
-            $targetQuery->whereIn('loan_payment_schedule.zone', $zones);
-        }
+        $target_yesterady = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $yesterday, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->whereIn('loans.status', [5, 12])
+            ->when(!empty($zones), function ($query) use ($zones) {
+                $query->whereIn('loan_payment_schedule.zone', $zones);
+            })
+            ->sum('payment_total_amount');
 
-        $targets = $targetQuery->pluck('total', 'payment_due_date');
-
-        $target = $targets[$today] ?? 0;
-        $target_yesterady = $targets[$yesterday] ?? 0;
-
-        $collectedQuery = PaymentSubmissions::whereIn('payment_submissions.payment_due_date', [$today, $yesterday])
-            ->where('payment_submissions.company', $user_company)
+        $collected = PaymentSubmissions::where(['payment_due_date' => $today, 'payment_submissions.company' => $user_company])
             ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
             ->whereIn('payment_submissions.submission_status', [4, 8, 11])
-            ->selectRaw('payment_submissions.payment_due_date, SUM(amount) as total')
-            ->groupBy('payment_submissions.payment_due_date');
+            ->when(!empty($zones), function ($query) use ($zones) {
+                $query->whereIn('payment_submissions.zone', $zones);
+            })
+            ->sum('amount');
 
-        if (!empty($branches)) {
-            $collectedQuery->whereIn('payment_submissions.branch', $branches);
-        } elseif (!empty($zones)) {
-            $collectedQuery->whereIn('payment_submissions.zone', $zones);
+
+        if (sizeof($branches) > 0) {
+            $target = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $today, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+                ->whereIn('loans.status', [5, 12])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('loan_payment_schedule.branch', $branches);
+                })
+                ->sum('payment_total_amount');
+
+            $target_yesterady = LoanPaymentSchedules::where(['loan_payment_schedule.payment_due_date' => $yesterday, 'loan_payment_schedule.company' => $user_company, 'loan_payment_schedule.status' => 1])
+                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+                ->whereIn('loans.status', [5, 12])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('loan_payment_schedule.branch', $branches);
+                })
+                ->sum('payment_total_amount');
+
+            $collected = PaymentSubmissions::where(['payment_due_date' => $today, 'payment_submissions.company' => $user_company])
+                ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                ->whereIn('payment_submissions.submission_status', [4, 8, 11])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('payment_submissions.branch', $branches);
+                })
+                ->sum('amount');
+
+            $collected_yesterday = PaymentSubmissions::where(['payment_due_date' => $yesterday, 'payment_submissions.company' => $user_company])
+                ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                ->whereIn('payment_submissions.submission_status', [4, 8, 11])
+                ->when(!empty($branches), function ($query) use ($branches) {
+                    $query->whereIn('payment_submissions.branch', $branches);
+                })
+                ->sum('amount');
         }
 
-        $collections = $collectedQuery->pluck('total', 'payment_due_date');
+        // Get today's collected amount
 
-        $collected = $collections[$today] ?? 0;
-        $collected_yesterday = $collections[$yesterday] ?? 0;
+
         return [
             'date' => $today,
             'target' => $target,
@@ -568,5 +589,7 @@ class Dashboard extends BaseController
             'target_yesterday' => $target_yesterady,
             'collected_yesterday' => $collected_yesterday,
         ];
+
+        return $results;
     }
 }
