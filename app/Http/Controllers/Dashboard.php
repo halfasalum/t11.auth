@@ -441,7 +441,7 @@ class Dashboard extends BaseController
                     ->join('loans', 'loan_payment_schedule.loan_number', '=', 'loans.loan_number')
                     ->whereIn('loans.status', [5, 12])
                     ->where('payment_due_date', '<=', $today)
-                    ->whereIn('zone', $zoneIds)
+                    ->whereIn('loan_payment_schedule.zone', $zoneIds)
                     ->groupBy('payment_due_date')
                     ->orderBy('payment_due_date', 'desc')
                     ->limit(7)
@@ -477,7 +477,7 @@ class Dashboard extends BaseController
                     ->join('loans', 'loan_payment_schedule.loan_number', '=', 'loans.loan_number')
                     ->whereIn('loans.status', [5, 12])
                     ->where('payment_due_date', '<=', $today)
-                    ->whereIn('zone', $zones)
+                    ->whereIn('loan_payment_schedule.zone', $zones)
                     ->groupBy('payment_due_date')
                     ->orderBy('payment_due_date', 'desc')
                     ->limit(7)
@@ -544,12 +544,12 @@ class Dashboard extends BaseController
         $target = $targets[$today] ?? 0;
         $target_yesterady = $targets[$yesterday] ?? 0;
 
-        $collectedQuery = PaymentSubmissions::whereIn('payment_submissions.payment_due_date', [$today, $yesterday])
+        $collectedQuery = PaymentSubmissions::whereIn('loan_payment_schedule.payment_due_date', [$today, $yesterday])
             ->where('payment_submissions.company', $user_company)
             ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
             ->whereIn('payment_submissions.submission_status', [4, 8, 11])
-            ->selectRaw('payment_submissions.payment_due_date, SUM(amount) as total')
-            ->groupBy('payment_submissions.payment_due_date');
+            ->selectRaw('loan_payment_schedule.payment_due_date, SUM(amount) as total')
+            ->groupBy('loan_payment_schedule.payment_due_date');
 
         if (!empty($branches)) {
             $collectedQuery->whereIn('payment_submissions.branch', $branches);

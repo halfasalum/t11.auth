@@ -215,7 +215,6 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
 
-
         // Schedule management
         Route::get('/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
         Route::get('/deleteSchedule/{scheduleId}', [LoanController::class, 'deleteSchedule']);

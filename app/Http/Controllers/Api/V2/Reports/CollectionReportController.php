@@ -289,6 +289,7 @@ class CollectionReportController extends BaseController
 
             // Get schedules due on this date
             $schedulesQuery = LoanPaymentSchedules::where('payment_due_date', $date)
+                ->where('loan_payment_schedule.status', 1)
                 ->whereHas('loan', function ($q) use ($companyId) {
                     $q->where('company', $companyId);
                 })
@@ -421,6 +422,7 @@ class CollectionReportController extends BaseController
 
             // Get schedules due on this date
             $schedulesQuery = LoanPaymentSchedules::where('payment_due_date', $date)
+                ->where('loan_payment_schedule.status', 1)
                 ->whereHas('loan', function ($q) use ($companyId) {
                     $q->where('company', $companyId);
                 })

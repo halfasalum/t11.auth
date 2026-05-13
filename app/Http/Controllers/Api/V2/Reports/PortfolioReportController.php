@@ -130,6 +130,7 @@ class PortfolioReportController extends BaseController
             foreach ($products as $product) {
                 $loans = Loans::where('product', $product->id)
                     ->where('company', $companyId)
+                    ->whereIn('loans.status',[5,6,7,12])
                     ->get();
 
                 $totalDisbursedProduct = $loans->sum('principal_amount');

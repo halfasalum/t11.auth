@@ -39,6 +39,7 @@ class BranchReportController extends BaseController
                 // Get loans in these zones
                 $loans = Loans::whereIn('zone', $zoneIds)
                     ->where('company', $companyId)
+                    ->whereIn('loans.status',[5,6,7,12])
                     ->get();
 
                 $totalDisbursed = $loans->sum('principal_amount');
@@ -117,6 +118,7 @@ class BranchReportController extends BaseController
                 // Get loans in this zone
                 $loans = Loans::where('zone', $zone->id)
                     ->where('company', $companyId)
+                    ->whereIn('loans.status',[5,6,7,12])
                     ->get();
 
                 $totalDisbursed = $loans->sum('principal_amount');
