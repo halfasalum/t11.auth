@@ -12,6 +12,7 @@ use App\Models\LoanPaymentSchedules;
 use App\Models\Loans;
 use App\Models\PaymentSubmissions;
 use App\Models\Zone;
+use App\Services\PaymentFeedback;
 use App\Services\UserLogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +24,14 @@ use Illuminate\Support\Facades\Log;
 
 class LoanPaymentsController extends BaseController
 {
+
+    protected $paymentFeedback;
+
+    public function __construct(PaymentFeedback $paymentFeedback)
+    {
+        $this->paymentFeedback = $paymentFeedback;
+    }
+
     /**
      * Get today's payments (for Today's Payments tab)
      */
@@ -414,7 +423,7 @@ class LoanPaymentsController extends BaseController
                 'payments.*.zone' => 'required|integer',
                 'payments.*.branch' => 'required|integer',
                 'payments.*.schedule' => 'required|integer',
-                'payments.*.account_id' => 'nullable|integer'
+                'payments.*.account_id' => 'required|integer'
             ]);
 
             $userId = $this->getUserId();
@@ -711,6 +720,8 @@ class LoanPaymentsController extends BaseController
             // Update loan balances
             $this->updateLoanBalances($validated['branch'], $validated['payment_date']);
 
+
+
             DB::commit();
 
 
@@ -746,7 +757,9 @@ class LoanPaymentsController extends BaseController
         foreach ($approvedPayments as $payment) {
             if ($payment->amount == 0) {
                 $this->updateLoanPenalty($payment->schedule_id, $payment->loan_number);
+                $this->paymentFeedback->sendFeedback($payment->schedule_id);
             }
+            $this->paymentFeedback->sendFeedback($payment->schedule_id);
 
             // Update loan payment record
             LoanPayments::where('loan_number', $payment->loan_number)

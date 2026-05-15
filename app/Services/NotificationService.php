@@ -27,11 +27,11 @@ class NotificationService
                 'company' => $company
             ]);
 
-            $api_key = config('services.beem.api_key', 'cd265ba2a9711dd6');
-            $secret_key = config('services.beem.secret_key', 'MzA2ZjNiMDBjNjgwOTQ0Njc2ZjU0MmE5YmU1YzNkZGIwOTcwNzQ5ZWMwY2Q0OWVmM2QyZjI0NmJkNzlhY2VmZg==');
+            $api_key = config('services.beem.api_key', '26fba7e5c594adf4');
+            $secret_key = config('services.beem.secret_key', 'NTAzMTYyMDIwZWU0ZDgxMDQ5NDcyNjRjOTk0OTg3ZTRlNTIyNDA1NzZhYTU3MjFmMjcxNzAyNzY0OGUwY2E2ZQ==');
 
             $postData = [
-                'source_addr' => 'TerminalXI',
+                'source_addr' => 'CMS',
                 'encoding' => 0,
                 'schedule_time' => '',
                 'message' => $message,

@@ -50,9 +50,9 @@ return [
         'public_key' => env('AIRTEL_MONEY_PUBLIC_KEY'),
     ],
     'beem' => [
-        'api_key' => env('BEEM_API_KEY', 'cd265ba2a9711dd6'),
-        'secret_key' => env('BEEM_SECRET_KEY', 'MzA2ZjNiMDBjNjgwOTQ0Njc2ZjU0MmE5YmU1YzNkZGIwOTcwNzQ5ZWMwY2Q0OWVmM2QyZjI0NmJkNzlhY2VmZg=='),
-        'source_addr' => env('BEEM_SOURCE_ADDR', 'TerminalXI'),
+        'api_key' => env('BEEM_API_KEY', '26fba7e5c594adf4'),
+        'secret_key' => env('BEEM_SECRET_KEY', 'NTAzMTYyMDIwZWU0ZDgxMDQ5NDcyNjRjOTk0OTg3ZTRlNTIyNDA1NzZhYTU3MjFmMjcxNzAyNzY0OGUwY2E2ZQ=='),
+        'source_addr' => env('BEEM_SOURCE_ADDR', 'CMS'),
     ],
 
 ];
