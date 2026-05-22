@@ -35,9 +35,9 @@ class Authcontroller extends Controller
             $branchesId = [];
             $zones = [];
             $zonesId = [];
-            
+
             $user = User::where('name', $username)->first();
-            
+
             if ($user && Hash::check($password, $user->password)) {
                 // Check if password needs change
                 $needsPasswordChange = false;
@@ -46,20 +46,20 @@ class Authcontroller extends Controller
                 } elseif ($user->password_expiry_date && now()->gt($user->password_expiry_date)) {
                     $needsPasswordChange = true;
                 }
-                
+
                 // Generate refresh token
                 $refreshToken = bin2hex(random_bytes(32));
                 $refreshTokenExpiry = now()->addDays(30);
-                
+
                 $user->refresh_token = $refreshToken;
                 $user->refresh_token_expiry = $refreshTokenExpiry;
                 $user->save();
-                
+
                 // Get roles and permissions
                 $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
                     ->select('role_id')
                     ->get();
-                    
+
                 if (sizeof($roles) > 0) {
                     foreach ($roles as $role) {
                         $role_permissions = role_permissions::where(['role_id' => $role->role_id, 'permission_status' => 1])
@@ -74,38 +74,38 @@ class Authcontroller extends Controller
                         }
                     }
                 }
-                
+
                 // Get branches
                 $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
                     ->select('branches.id', 'branch_name')
                     ->join('branches', 'branches.id', '=', 'branch_users.branch_id')
                     ->where('branches.status', 1)
                     ->get();
-                    
+
                 if (sizeof($branchesData) > 0) {
                     foreach ($branchesData as $branch) {
                         $branches[] = $branch->branch_name;
                         $branchesId[] = $branch->id;
                     }
                 }
-                
+
                 // Get zones
                 $zonesData = ZoneUser::where(['user_id' => $user->id, 'zone_users.status' => 1])
                     ->select('zones.id', 'zone_name')
                     ->join('zones', 'zones.id', '=', 'zone_users.zone_id')
                     ->where('zones.status', 1)
                     ->get();
-                    
+
                 if (sizeof($zonesData) > 0) {
                     foreach ($zonesData as $zone) {
                         $zones[] = $zone->zone_name;
                         $zonesId[] = $zone->id;
                     }
                 }
-                
+
                 $company = Company::where('id', $user->user_company)->first();
                 $financial = $this->generateFinancialYearDate($company->financial_year_start);
-                
+
                 // Generate JWT token
                 $token = JWTAuth::claims([
                     'controls' => $controls,
@@ -121,9 +121,12 @@ class Authcontroller extends Controller
                     "f_end_date" => $financial['end_date'],
                     'name'  => $user->first_name . " - " . $user->last_name,
                 ])->fromUser($user);
+                $user->last_login_at = now();
+                $user->save();
 
                 $userLogService->log('login', null, $user->id, $user->user_company);
-                
+
+
                 return response()->json([
                     'token' => $token,
                     'refresh_token' => $refreshToken,
@@ -160,10 +163,10 @@ class Authcontroller extends Controller
     {
         try {
             Log::info('=== REFRESH TOKEN START ===');
-            
+
             // Try to get refresh token from request
             $refreshToken = $request->refresh_token ?? $request->header('X-Refresh-Token');
-            
+
             if (!$refreshToken) {
                 // Fallback to old method - try to refresh JWT directly
                 try {
@@ -181,7 +184,7 @@ class Authcontroller extends Controller
                 $user = User::where('refresh_token', $refreshToken)
                     ->where('refresh_token_expiry', '>', now())
                     ->first();
-                
+
                 if (!$user) {
                     Log::error('Invalid or expired refresh token');
                     return response()->json([
@@ -189,24 +192,24 @@ class Authcontroller extends Controller
                         'message' => 'Invalid or expired refresh token',
                     ], 401);
                 }
-                
+
                 // Generate new JWT token
                 $newToken = JWTAuth::fromUser($user);
-                
+
                 // Generate new refresh token
                 $newRefreshToken = bin2hex(random_bytes(32));
                 $user->refresh_token = $newRefreshToken;
                 $user->refresh_token_expiry = now()->addDays(30);
                 $user->save();
-                
+
                 Log::info('Token refreshed successfully for user: ' . $user->id);
-                
+
                 // Return new refresh token as well
                 $responseData = [
                     'refresh_token' => $newRefreshToken,
                 ];
             }
-            
+
             // Fetch user permissions, branches, and company details
             $controls = [];
             $branches = [];
@@ -272,13 +275,12 @@ class Authcontroller extends Controller
                 'message' => 'Token refreshed successfully',
                 'expires_in' => config('jwt.ttl') * 60,
             ];
-            
+
             if (isset($responseData)) {
                 $response = array_merge($response, $responseData);
             }
-            
+
             return response()->json($response);
-            
         } catch (TokenExpiredException $e) {
             Log::error('REFRESH ERROR - TokenExpiredException: ' . $e->getMessage());
             return response()->json([
@@ -341,30 +343,29 @@ class Authcontroller extends Controller
                 'current_password' => 'required|string',
                 'new_password' => 'required|string|min:8|confirmed',
             ]);
-            
+
             $user = JWTAuth::parseToken()->authenticate();
-            
+
             if (!Hash::check($validated['current_password'], $user->password)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Current password is incorrect'
                 ], 422);
             }
-            
+
             $user->password = Hash::make($validated['new_password']);
             $user->password_changed_at = now();
             $user->password_expiry_date = now()->addDays(90);
             $user->save();
-            
+
             // Generate new token
             $newToken = JWTAuth::fromUser($user);
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Password changed successfully',
                 'token' => $newToken
             ]);
-            
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,

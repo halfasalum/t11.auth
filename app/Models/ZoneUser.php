@@ -20,13 +20,17 @@ class ZoneUser extends Model
     {
         return $this->belongsTo(Zone::class, 'zone_id', 'id');
     }
-    
+
+    public function zones(){
+        return $this->hasMany(Zone::class, 'id', 'zone_id');
+    }
+
     /**
      * Get the user assigned to this zone
      */
     public function user()
     {
         return $this->belongsTo(User::class, 'user_id', 'id')
-         ->where('users.status', 1);
+            ->where('users.status', 1);
     }
 }

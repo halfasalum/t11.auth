@@ -94,7 +94,7 @@ class BankController extends Controller
                 ->with(['account', 'customer', 'branch', 'zone'])
                 ->whereBetween('transaction_date', [$startDate, $endDate])
                 ->orderBy('transaction_date', 'desc')
-                ->limit(20)
+                //->limit(20)
                 ->get();
 
             return response()->json([

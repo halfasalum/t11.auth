@@ -26,4 +26,9 @@ class Expenses extends Model
         'registered_by'
     ];
 
+
+    public function category()
+    {
+        return $this->belongsTo(Categories::class, 'category_id', 'id');
+    }
 }

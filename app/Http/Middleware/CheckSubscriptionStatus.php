@@ -26,7 +26,7 @@ class CheckSubscriptionStatus
             $user = JWTAuth::parseToken()->getPayload();
             $user_company = $user->get('company');
             $subscription = Subscriptions::where('company_id', $user_company)
-                ->where('status', 1)
+                ->where('status', 'active')
                 ->first();
             if (!$subscription) {
                 return response()->json(['message' => 'Error: Your Subscription has expired'], 409);

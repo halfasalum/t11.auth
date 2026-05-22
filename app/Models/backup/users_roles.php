@@ -10,4 +10,10 @@ class users_roles extends Model
     protected $primaryKey = 'id';
     public $timestamps = true;
     protected $fillable = ['user_id', 'role_id', 'user_role_status'];
+
+    public function roles()
+    {
+        return $this->belongsTo(Roles::class, 'role_id');
+    }
+    
 }

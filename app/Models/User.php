@@ -50,7 +50,8 @@ class User extends Authenticatable implements JWTSubject
         'refresh_token',
         'refresh_token_expiry',
         'password_changed_at',
-        'password_expiry_date'
+        'password_expiry_date',
+        'last_login_at'
     ];
 
     /**
@@ -85,5 +86,20 @@ class User extends Authenticatable implements JWTSubject
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    public function user_roles()
+    {
+        return $this->belongsToMany(users_roles::class,'users_roles', 'user_id', 'role_id');
+    }
+
+    public function user_zones()
+    {
+        return $this->belongsToMany(ZoneUser::class, 'user_id', 'zone_id');
+    }
+
+    public function user_branches()
+    {
+        return $this->belongsToMany(BranchUser::class, 'user_id', 'branch_id');
     }
 }

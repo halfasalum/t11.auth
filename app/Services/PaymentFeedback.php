@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Company;
 use App\Models\Customers;
 use App\Models\Loans;
 use App\Models\LoanSchedules;
@@ -30,21 +31,22 @@ class PaymentFeedback
             $customer = Customers::find($loan->customer);
 
             if ($payment) {
+                $company = Company::find($payment->company);
+                $company_name = $company->company_name;
+                $company_phone = $company->company_phone;
                 $paid = $payment->amount;
 
                 $balance = $loan->total_loan - $loan->loan_paid - $paid;
                 $penalty = $loan->penalty_amount;
+                $phone = $customer->phone;
                 if ($paid <= 0) {
-                } else {
-                    $phone = $customer->phone;
                     $message =
-                        "MALIPO YAMEPOKELEWA\n 
-            Mkopo : " . $loan->loan_number . " 
-            kiasi :  " . $paid . " 
-            Rejesho la  " . $schedule->payment_due_date . "
-            Deni la sasa : " . $balance;
-                    $this->notificationService->sendSms($phone, $message);
+                        "MALIPO HAYAJAPOKELEWA\nMkopo : " . $loan->loan_number . "\nkiasi :  " . $paid . "\nRejesho la  " . $schedule->payment_due_date . "\nDeni la sasa : " . $balance . "\nJumla ya penati : " . $penalty . "\n" . $company_name . "\n" . $company_phone;
+                } else {
+                    $message =
+                        "MALIPO YAMEPOKELEWA\nMkopo : " . $loan->loan_number . "\nkiasi :  " . $paid . "\nRejesho la  " . $schedule->payment_due_date . "\nDeni la sasa : " . $balance . "\n\n" . $company_name . "\n" . $company_phone;
                 }
+                $this->notificationService->sendSms($phone, $message);
             }
         }
     }

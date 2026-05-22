@@ -1,10 +1,12 @@
 <?php
 
+use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
 use App\Http\Controllers\Api\V2\LoansProductsController;
 use App\Http\Controllers\Api\V2\PaymentsController;
+use App\Http\Controllers\Api\V2\PlanManagementController;
 use App\Http\Controllers\Api\V2\Reports\AnalyticsReportController;
 use App\Http\Controllers\Api\V2\Reports\BranchReportController;
 use App\Http\Controllers\Api\V2\Reports\CollectionReportController;
@@ -14,6 +16,8 @@ use App\Http\Controllers\Api\V2\Reports\CustomerReportController;
 use App\Http\Controllers\Api\V2\Reports\FinancialReportController;
 use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
+use App\Http\Controllers\Api\V2\SqlQueryController;
+use App\Http\Controllers\Api\V2\SubscriptionController;
 use App\Http\Controllers\Authcontroller;
 use App\Http\Controllers\BankController;
 use App\Http\Controllers\Branch;
@@ -234,6 +238,66 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/users/dropdown', [ExpenseController::class, 'getUsersDropdown']);
     });
 
+
+    // Support Ticket Routes
+    Route::prefix('tickets')->middleware(['subscription.feature:has_support_tickets'])->group(function () {
+        Route::get('/', [SupportTicketController::class, 'index']);
+        Route::get('/stats', [SupportTicketController::class, 'getStats']);
+        Route::post('/', [SupportTicketController::class, 'store']);
+        Route::get('/{id}', [SupportTicketController::class, 'show']);
+        Route::put('/{id}', [SupportTicketController::class, 'update']);
+        Route::post('/{id}/assign', [SupportTicketController::class, 'assign']);
+        Route::post('/{id}/status', [SupportTicketController::class, 'changeStatus']);
+        Route::post('/{id}/priority', [SupportTicketController::class, 'changePriority']);
+        Route::post('/{id}/reply', [SupportTicketController::class, 'addReply']);
+    });
+
+    Route::prefix('subscription')->group(function () {
+
+        // Client routes
+        Route::get('/plans', [SubscriptionController::class, 'getPlans']);
+        Route::get('/current', [SubscriptionController::class, 'getCurrentSubscription']);
+        Route::post('/order', [SubscriptionController::class, 'submitOrder']);
+        Route::get('/orders', [SubscriptionController::class, 'getOrderHistory']);
+        Route::get('/orders/{id}', [SubscriptionController::class, 'getOrder']);
+
+        // Admin routes
+        Route::prefix('admin')->group(function () {
+            Route::get('/pending-orders', [SubscriptionController::class, 'getPendingOrders']);
+            Route::get('/all-orders', [SubscriptionController::class, 'getAllOrders']);
+            Route::get('/stats', [SubscriptionController::class, 'getAdminStats']);
+            // Get all company subscriptions
+            Route::get('/subscriptions', [SubscriptionController::class, 'getCompanySubscriptions']);
+
+            // Renew a subscription
+            Route::post('/subscriptions/{id}/renew', [SubscriptionController::class, 'renewSubscription']);
+
+            // Cancel a subscription
+            Route::post('/subscriptions/{id}/cancel', [SubscriptionController::class, 'cancelSubscription']);
+            Route::post('/orders/{id}/verify', [SubscriptionController::class, 'verifyOrder']);
+            Route::post('/orders/{id}/approve', [SubscriptionController::class, 'approveOrder']);
+            Route::post('/orders/{id}/reject', [SubscriptionController::class, 'rejectOrder']);
+        });
+    });
+
+
+    Route::prefix('admin')->group(function () {
+        Route::get('/plans', [PlanManagementController::class, 'index']);
+        Route::post('/plans', [PlanManagementController::class, 'store']);
+        Route::get('/plans/{id}', [PlanManagementController::class, 'show']);
+        Route::put('/plans/{id}', [PlanManagementController::class, 'update']);
+        Route::delete('/plans/{id}', [PlanManagementController::class, 'destroy']);
+    });
+
+    Route::prefix('sql')->group(function () {
+        Route::post('/execute', [SqlQueryController::class, 'execute']);
+        Route::get('/history', [SqlQueryController::class, 'getHistory']);
+        Route::get('/tables', [SqlQueryController::class, 'getTables']);
+        Route::get('/tables/{table}/schema', [SqlQueryController::class, 'getTableSchema']);
+        Route::get('/suggestions', [SqlQueryController::class, 'getSuggestions']);
+    });
+
+
     /* Route::prefix('users')->group(function () {
         Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':10']);
     }); */
@@ -280,9 +344,10 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::get("/zones", [ZoneController::class, "list"])->middleware([ControlAccessMiddleware::class . ':30']);
     Route::get("/user/zones", [ZoneController::class, "getUserAssignedZones"])->middleware([ControlAccessMiddleware::class . ':12']);
     Route::post("/zone/register", [ZoneController::class, "register"])->middleware([ControlAccessMiddleware::class . ':30'])->middleware([CheckSubscriptionLimits::class . ':zones']);
-    Route::get("/dashboard/officer", [Dashboard::class, "officer_dashboard"])->middleware([ControlAccessMiddleware::class . ':19']);
-    Route::get("/dashboard/branch", [Dashboard::class, "branch_dashboard"])->middleware([ControlAccessMiddleware::class . ':20']);
-    Route::get("/dashboard/manager", [Dashboard::class, "manager_dashboard"])->middleware([ControlAccessMiddleware::class . ':21']);
+    Route::get('/dashboard/officer', [Dashboard::class, 'officer_dashboard'])->middleware([ControlAccessMiddleware::class . ':19']);
+    Route::get('/dashboard/branch', [Dashboard::class, 'branch_dashboard'])->middleware([ControlAccessMiddleware::class . ':20']);
+    Route::get('/dashboard/manager', [Dashboard::class, 'manager_dashboard'])->middleware([ControlAccessMiddleware::class . ':21']);
+    Route::get('/dashboard/admin', [Dashboard::class, 'admin_dashboard'])->middleware([ControlAccessMiddleware::class . ':22']);
     Route::get("/allocation/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::post("/allocationUpdate", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::post("/user/allocations/update", [SystemUsers::class, "updateUserAllocations"])->middleware([ControlAccessMiddleware::class . ':29']);
