@@ -471,13 +471,13 @@ class Dashboard extends BaseController
             $active = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
             $completed = $loans->where('status', Loans::STATUS_COMPLETED)->count();
             $outstanding = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             // Calculate overdue amounts
             $overdueLoans = $loans->where('status', Loans::STATUS_OVERDUE);
             $overdueAmount = $overdueLoans->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
             $overdueCount = $overdueLoans->count();
         }
@@ -565,14 +565,15 @@ class Dashboard extends BaseController
 
             $target = $targetQuery->sum('payment_total_amount');
 
-            $collectedQuery = PaymentSubmissions::whereDate('submitted_date', $date)
-                ->where('company', $companyId)
+            $collectedQuery = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+                ->whereDate('payment_due_date', $date)
+                ->where('payment_submissions.company', $companyId)
                 ->where('submission_status', 11);
 
             if (!empty($branchIds)) {
-                $collectedQuery->whereIn('branch', $branchIds);
+                $collectedQuery->whereIn('loan_payment_schedule.branch', $branchIds);
             } elseif (!empty($zoneIds)) {
-                $collectedQuery->whereIn('zone', $zoneIds);
+                $collectedQuery->whereIn('loan_payment_schedule.zone', $zoneIds);
             }
 
             $collected = $collectedQuery->sum('amount');
@@ -646,7 +647,8 @@ class Dashboard extends BaseController
             ->get()
             ->map(function ($schedule) {
                 $customer = $schedule->loan->loan_customer;
-                $daysOverdue = Carbon::parse($schedule->payment_due_date)->diffInDays(now());
+                $daysOverdue =  (int) Carbon::parse($schedule->payment_due_date)
+                    ->diffInDays(now());
                 return [
                     'id' => $schedule->id,
                     'loan_number' => $schedule->loan_number,
@@ -776,12 +778,13 @@ class Dashboard extends BaseController
 
         $target = $targetQuery->sum('payment_total_amount');
 
-        $collectedQuery = PaymentSubmissions::whereBetween('submitted_date', [$startOfMonth, $today])
-            ->where('company', $companyId)
+        $collectedQuery = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startOfMonth, $today])
+            ->where('payment_submissions.company', $companyId)
             ->where('submission_status', 11);
 
         if (!empty($zoneIds)) {
-            $collectedQuery->whereIn('zone', $zoneIds);
+            $collectedQuery->whereIn('loan_payment_schedule.zone', $zoneIds);
         }
 
         $collected = $collectedQuery->sum('amount');
@@ -796,12 +799,13 @@ class Dashboard extends BaseController
     {
         $startOfMonth = Carbon::now()->startOfMonth();
 
-        $payments = PaymentSubmissions::whereBetween('submitted_date', [$startOfMonth, Carbon::now()])
-            ->where('company', $companyId)
+        $payments = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
+            ->where('payment_submissions.company', $companyId)
             ->where('submission_status', 11);
 
         if (!empty($zoneIds)) {
-            $payments->whereIn('zone', $zoneIds);
+            $payments->whereIn('loan_payment_schedule.zone', $zoneIds);
         }
 
         $payments = $payments->get();
@@ -884,9 +888,10 @@ class Dashboard extends BaseController
             })
             ->sum('payment_total_amount');
 
-        $collected = PaymentSubmissions::whereDate('submitted_date', $today)
-            ->whereIn('zone', $zoneIds)
-            ->where('company', $companyId)
+        $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereDate('payment_due_date', $today)
+            ->whereIn('loan_payment_schedule.zone', $zoneIds)
+            ->where('payment_submissions.company', $companyId)
             ->where('submission_status', 11)
             ->whereHas('loan', function ($q) use ($userId) {
                 $q->where('registered_by', $userId);
@@ -941,7 +946,7 @@ class Dashboard extends BaseController
         $active = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
         $completed = $loans->where('status', Loans::STATUS_COMPLETED)->count();
         $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-            return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+            return ($loan->total_loan) - $loan->loan_paid;
         });
 
         // Calculate default rate
@@ -958,11 +963,12 @@ class Dashboard extends BaseController
             })
             ->sum('payment_total_amount');
 
-        $collected = PaymentSubmissions::whereBetween('submitted_date', [$startOfMonth, Carbon::now()])
-            ->where('company', $companyId)
+        $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
+            ->where('payment_submissions.company', $companyId)
             ->where('submission_status', 11)
             ->when(!empty($zoneIds), function ($q) use ($zoneIds) {
-                $q->whereIn('zone', $zoneIds);
+                $q->whereIn('loan_payment_schedule.zone', $zoneIds);
             })
             ->sum('amount');
 
@@ -1010,9 +1016,10 @@ class Dashboard extends BaseController
                 ->where('company', $companyId)
                 ->sum('payment_total_amount');
 
-            $collected = PaymentSubmissions::whereDate('submitted_date', $today)
-                ->whereIn('zone', $officerZones)
-                ->where('company', $companyId)
+            $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+                ->whereDate('payment_due_date', $today)
+                ->whereIn('loan_payment_schedule.zone', $officerZones)
+                ->where('payment_submissions.company', $companyId)
                 ->where('submission_status', 11)
                 ->sum('amount');
 
@@ -1053,7 +1060,7 @@ class Dashboard extends BaseController
 
             $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
             $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             // Get collection rate for this zone
@@ -1063,9 +1070,10 @@ class Dashboard extends BaseController
                 ->where('company', $companyId)
                 ->sum('payment_total_amount');
 
-            $collected = PaymentSubmissions::whereBetween('submitted_date', [$startOfMonth, Carbon::now()])
-                ->where('zone', $zone->id)
-                ->where('company', $companyId)
+            $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+                ->whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
+                ->where('loan_payment_schedule.zone', $zone->id)
+                ->where('payment_submissions.company', $companyId)
                 ->where('submission_status', 11)
                 ->sum('amount');
 
@@ -1145,7 +1153,7 @@ class Dashboard extends BaseController
         foreach ($loans as $loan) {
             if ($loan->end_date) {
                 $daysOverdue = Carbon::parse($loan->end_date)->diffInDays(now());
-                $outstanding = ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                $outstanding = ($loan->total_loan) - $loan->loan_paid;
 
                 if ($daysOverdue > 30 && $daysOverdue <= 60) {
                     $par30 += $outstanding;
@@ -1161,7 +1169,7 @@ class Dashboard extends BaseController
         }
 
         $totalPortfolio = $loans->sum(function ($loan) {
-            return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+            return ($loan->total_loan) - $loan->loan_paid;
         });
 
         $percentage = $totalPortfolio > 0 ? round((($par30 + $par60 + $par90) / $totalPortfolio) * 100, 2) : 0;
@@ -1196,7 +1204,7 @@ class Dashboard extends BaseController
             $totalDisbursed = $loans->sum('principal_amount');
             $totalRepaid = $loans->sum('loan_paid');
             $outstanding = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             $financials[] = [
@@ -1239,7 +1247,7 @@ class Dashboard extends BaseController
             $totalDisbursed = $loans->sum('principal_amount');
             $totalRepaid = $loans->sum('loan_paid');
             $outstanding = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             $performance[] = [
@@ -1283,7 +1291,7 @@ class Dashboard extends BaseController
         $completed = $loans->where('status', Loans::STATUS_COMPLETED)->count();
         $defaulted = $loans->where('status', Loans::STATUS_DEFAULTED)->count();
         $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-            return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+            return ($loan->total_loan) - $loan->loan_paid;
         });
 
         $defaultRate = $total > 0 ? round(($defaulted / $total) * 100, 2) : 0;
@@ -1308,7 +1316,7 @@ class Dashboard extends BaseController
             ->get();
 
         $totalPortfolio = $loans->sum(function ($loan) {
-            return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+            return ($loan->total_loan) - $loan->loan_paid;
         });
 
         $averageLoanSize = $loans->count() > 0 ? $loans->avg('principal_amount') : 0;
@@ -1321,7 +1329,7 @@ class Dashboard extends BaseController
         foreach ($loans as $loan) {
             if ($loan->end_date) {
                 $daysOverdue = Carbon::parse($loan->end_date)->diffInDays(now());
-                $outstanding = ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                $outstanding = ($loan->total_loan) - $loan->loan_paid;
 
                 if ($daysOverdue > 30 && $daysOverdue <= 60) {
                     $par30 += $outstanding;
@@ -1339,8 +1347,9 @@ class Dashboard extends BaseController
             ->where('company', $companyId)
             ->sum('payment_total_amount');
 
-        $collected = PaymentSubmissions::whereBetween('submitted_date', [$startOfMonth, Carbon::now()])
-            ->where('company', $companyId)
+        $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
+            ->where('payment_submissions.company', $companyId)
             ->where('submission_status', 11)
             ->sum('amount');
 
@@ -1390,15 +1399,22 @@ class Dashboard extends BaseController
         $endDate = Carbon::now();
 
         // Interest income
-        $interestIncome = PaymentSubmissions::where('company', $companyId)
+        $interestIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
+            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
             ->where('submission_status', 11)
-            ->whereBetween('submitted_date', [$startDate, $endDate])
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->sum('paid_interest');
+        $scheduleIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
+            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->where('submission_status', 11)
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
+            ->sum('amount');
 
         // Penalty income
-        $penaltyIncome = PaymentSubmissions::where('company', $companyId)
+        $penaltyIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
+            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
             ->where('submission_status', 11)
-            ->whereBetween('submitted_date', [$startDate, $endDate])
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->whereHas('schedule', function ($q) {
                 $q->where('is_penalty', true);
             })
@@ -1450,7 +1466,7 @@ class Dashboard extends BaseController
                 ->whereIn('zone', $zoneIds)
                 ->get();
 
-            $totalDisbursed = $loans->sum('principal_amount');
+            $totalDisbursed = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED, Loans::STATUS_DEFAULTED])->sum('total_loan');
             $totalRepaid = $loans->sum('loan_paid');
             $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
             $completedLoans = $loans->where('status', Loans::STATUS_COMPLETED)->count();
@@ -1459,8 +1475,17 @@ class Dashboard extends BaseController
             $defaultRate = $loans->count() > 0 ? round(($defaultedLoans / $loans->count()) * 100, 2) : 0;
 
             $collectionRate = $totalDisbursed > 0 ? round(($totalRepaid / $totalDisbursed) * 100, 2) : 0;
-            
+
             $todayGoal = $this->getTodayCollection([], [$branch->id], $companyId);
+            $totalPortfolio = $loans
+                ->whereIn('status', [
+                    Loans::STATUS_ACTIVE,
+                    Loans::STATUS_OVERDUE
+                ])
+                ->sum(
+                    fn($loan) =>
+                    $loan->total_loan - $loan->loan_paid
+                );
 
             $performance[] = [
                 'branch_id' => $branch->id,
@@ -1472,7 +1497,7 @@ class Dashboard extends BaseController
                 'total_repaid' => (float) $totalRepaid,
                 'collection_rate' => $collectionRate,
                 'default_rate' => $defaultRate,
-                'outstanding' => (float) ($totalDisbursed - $totalRepaid),
+                'outstanding' => (float) ($totalPortfolio),
                 'today_target' => (float) ($todayGoal['target'] ?? 0),
                 'today_collected' => (float) ($todayGoal['collected'] ?? 0),
                 'today_efficiency' => !empty($todayGoal['target']) && $todayGoal['target'] > 0 ? round(($todayGoal['collected'] / $todayGoal['target']) * 100, 2) : 0,
@@ -1569,7 +1594,7 @@ class Dashboard extends BaseController
             foreach ($loans as $loan) {
                 if ($loan->end_date) {
                     $daysOverdue = Carbon::parse($loan->end_date)->diffInDays(now());
-                    $outstanding = ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                    $outstanding = ($loan->total_loan) - $loan->loan_paid;
 
                     if ($daysOverdue > 30 && $daysOverdue <= 60) {
                         $par30 += $outstanding;
@@ -1582,7 +1607,7 @@ class Dashboard extends BaseController
             }
 
             $totalPortfolio = $loans->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             $trend[] = [
@@ -1694,7 +1719,7 @@ class Dashboard extends BaseController
                     'customer_id' => $customerLoans->first()->customer,
                     'customer_name' => $customerLoans->first()->loan_customer->fullname ?? 'Unknown',
                     'total_outstanding' => $customerLoans->sum(function ($loan) {
-                        return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                        return ($loan->total_loan) - $loan->loan_paid;
                     }),
                     'loan_count' => $customerLoans->count(),
                 ];
@@ -1729,14 +1754,14 @@ class Dashboard extends BaseController
                 return [
                     'customer_id' => $customerLoans->first()->customer,
                     'customer_name' => $customerLoans->first()->loan_customer->fullname ?? 'Unknown',
-                    'total_borrowed' => $customerLoans->sum('principal_amount'),
+                    'total_borrowed' => $customerLoans->sum('total_loan'),
                     'total_repaid' => $customerLoans->sum('loan_paid'),
                     'outstanding' => $customerLoans->sum(function ($loan) {
-                        return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                        return ($loan->total_loan) - $loan->loan_paid;
                     }),
                     'loan_count' => $customerLoans->count(),
-                    'repayment_rate' => $customerLoans->sum('principal_amount') > 0
-                        ? round(($customerLoans->sum('loan_paid') / $customerLoans->sum('principal_amount')) * 100, 2)
+                    'repayment_rate' => $customerLoans->sum('total_loan') > 0
+                        ? round(($customerLoans->sum('loan_paid') / $customerLoans->sum('total_loan')) * 100, 2)
                         : 0,
                 ];
             })
@@ -1788,9 +1813,10 @@ class Dashboard extends BaseController
         $endDate = Carbon::now();
 
         // Cash inflows (collections)
-        $collections = PaymentSubmissions::where('company', $companyId)
+        $collections = PaymentSubmissions::where('payment_submissions.company', $companyId)
+            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
             ->where('submission_status', 11)
-            ->whereBetween('submitted_date', [$startDate, $endDate])
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->sum('amount');
 
         // Cash outflows (disbursements)
@@ -1880,13 +1906,13 @@ class Dashboard extends BaseController
      */
     private function getCompaniesOverview()
     {
-        $companies = Company::where('company_status','!=', 3)->get();
+        $companies = Company::where('company_status', '!=', 3)->get();
         $overview = [];
 
         foreach ($companies as $company) {
             $loans = Loans::where('company', $company->id)->get();
             $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                return ($loan->total_loan) - $loan->loan_paid;
             });
 
             $overview[] = [
@@ -1914,12 +1940,14 @@ class Dashboard extends BaseController
 
         $totalLoans = Loans::whereBetween('created_at', [$startDate, $endDate])->count();
         $totalDisbursed = Loans::whereBetween('created_at', [$startDate, $endDate])->sum('principal_amount');
-        $totalCollected = PaymentSubmissions::whereBetween('submitted_date', [$startDate, $endDate])
+        $totalCollected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->where('submission_status', 11)
             ->sum('amount');
 
         // Total interest collected
-        $totalInterest = PaymentSubmissions::whereBetween('submitted_date', [$startDate, $endDate])
+        $totalInterest = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->where('submission_status', 11)
             ->sum('paid_interest');
 
@@ -2052,7 +2080,7 @@ class Dashboard extends BaseController
     {
         // Cache the result for 60 minutes to prevent slowing down the dashboard when user_logs grows massively
         return Cache::remember('platform_analytics_super_admin', 3600, function () {
-            
+
             // 1. Calculate Mobile vs Web Usage
             $totalLogs = UserLog::count();
 
@@ -2072,13 +2100,13 @@ class Dashboard extends BaseController
                 $mobileUsagePercentage = 0;
                 $webUsagePercentage = 0;
             }
-            
+
             // 2. Calculate Platform Growth Rate (New Companies vs Total Previous Companies)
             // Because SaaS growth is better reflected by new organizations subscribing to the software
             $newCompaniesThisMonth = Company::where('created_at', '>=', Carbon::now()->startOfMonth())->count();
             $totalCompaniesBeforeThisMonth = Company::where('created_at', '<', Carbon::now()->startOfMonth())->count();
 
-            $growthRate = $totalCompaniesBeforeThisMonth > 0 
+            $growthRate = $totalCompaniesBeforeThisMonth > 0
                 ? round(($newCompaniesThisMonth / $totalCompaniesBeforeThisMonth) * 100, 2)
                 : ($newCompaniesThisMonth > 0 ? 100 : 0);
 

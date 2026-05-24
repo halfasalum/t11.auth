@@ -10,5 +10,4 @@ use Illuminate\Support\Facades\Schedule;
 Schedule::command('app:check-company-subscription')->dailyAt('00:05')->runInBackground();
 Schedule::command('app:update-overdue-loans')->dailyAt('00:10')->runInBackground();
 Schedule::command('loans:handle-overdue-schedules')->dailyAt('00:15')->runInBackground();
-
-
+Schedule::command('payments:process')->everyMinute()->runInBackground();

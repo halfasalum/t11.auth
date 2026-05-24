@@ -61,6 +61,8 @@ class Loans extends Model
         'loan_paid' => 'decimal:2',
         'start_date' => 'date',
         'end_date' => 'date',
+        'principal_paid'=>'decimal:2',
+        'interest_paid'=>'decimal:2'
     ];
 
     // ============================================

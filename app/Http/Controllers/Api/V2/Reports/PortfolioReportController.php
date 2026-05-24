@@ -34,30 +34,30 @@ class PortfolioReportController extends BaseController
                 ->sum('principal_amount');
 
             $totalRepaid = Loans::where('company', $companyId)
-                ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_COMPLETED, Loans::STATUS_DEFAULTED])
-                ->sum('loan_paid');
+                ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_COMPLETED, Loans::STATUS_DEFAULTED, Loans::STATUS_OVERDUE])
+                ->sum('principal_paid');
 
             $outstandingBalance = $activeLoans->sum(function ($loan) {
-                return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                return ($loan->total_loan) - ($loan->loan_paid ?? 0);
             });
 
             // Calculate PAR (Portfolio at Risk)
             $par30 = $activeLoans->filter(function ($loan) {
                 return $loan->end_date && Carbon::parse($loan->end_date)->diffInDays(now()) > 30;
             })->sum(function ($loan) {
-                return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                return ($loan->total_loan - ($loan->loan_paid ?? 0));
             });
 
             $par60 = $activeLoans->filter(function ($loan) {
                 return $loan->end_date && Carbon::parse($loan->end_date)->diffInDays(now()) > 60;
             })->sum(function ($loan) {
-                return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                return ($loan->total_loan - ($loan->loan_paid ?? 0));
             });
 
             $par90 = $activeLoans->filter(function ($loan) {
                 return $loan->end_date && Carbon::parse($loan->end_date)->diffInDays(now()) > 90;
             })->sum(function ($loan) {
-                return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                return ($loan->total_loan - ($loan->loan_paid ?? 0));
             });
 
             // Calculate recovery rate
@@ -71,9 +71,10 @@ class PortfolioReportController extends BaseController
                 })
                 ->sum('payment_total_amount');
 
-            $actualCollection = PaymentSubmissions::whereBetween('submitted_date', [$currentMonthStart, Carbon::now()])
-                ->where('company', $companyId)
-                ->where('submission_status', 11)
+            $actualCollection = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+                ->whereBetween('loan_payment_schedule.payment_due_date', [$currentMonthStart, Carbon::now()])
+                ->where('payment_submissions.company', $companyId)
+                ->where('payment_submissions.submission_status', 11)
                 ->sum('amount');
 
             $collectionEfficiency = $expectedCollection > 0 ? ($actualCollection / $expectedCollection) * 100 : 0;
@@ -319,7 +320,7 @@ class PortfolioReportController extends BaseController
                 'branch_name' => $branch->branch_name,
                 'total_loans' => $loans->count(),
                 'total_outstanding' => (float) $loans->sum(function ($loan) {
-                    return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                    return ($loan->total_loan ) - ($loan->loan_paid ?? 0);
                 }),
             ];
         }
@@ -346,7 +347,7 @@ class PortfolioReportController extends BaseController
                     'product_name' => $product->product_name,
                     'total_loans' => $loans->count(),
                     'total_outstanding' => (float) $loans->sum(function ($loan) {
-                        return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                        return ($loan->total_loan ) - ($loan->loan_paid ?? 0);
                     }),
                     'average_loan_size' => (float) ($loans->sum('principal_amount') / $loans->count()),
                 ];

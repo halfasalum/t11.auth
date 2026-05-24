@@ -52,6 +52,14 @@ return [
 
     'channels' => [
 
+        'loan_payments' => [
+            'driver'    => 'daily',
+            'path'      => storage_path('logs/loan_payments.log'),
+            'level'     => 'debug',
+            'days'      => 90,        // keep 90 days of history
+            'formatter' => Monolog\Formatter\JsonFormatter::class,  // one JSON object per line — easy to grep/parse
+        ],
+
         'stack' => [
             'driver' => 'stack',
             'channels' => explode(',', env('LOG_STACK', 'single')),
@@ -89,7 +97,7 @@ return [
             'handler_with' => [
                 'host' => env('PAPERTRAIL_URL'),
                 'port' => env('PAPERTRAIL_PORT'),
-                'connectionString' => 'tls://'.env('PAPERTRAIL_URL').':'.env('PAPERTRAIL_PORT'),
+                'connectionString' => 'tls://' . env('PAPERTRAIL_URL') . ':' . env('PAPERTRAIL_PORT'),
             ],
             'processors' => [PsrLogMessageProcessor::class],
         ],
