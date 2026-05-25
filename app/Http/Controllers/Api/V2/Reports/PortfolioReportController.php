@@ -131,13 +131,13 @@ class PortfolioReportController extends BaseController
             foreach ($products as $product) {
                 $loans = Loans::where('product', $product->id)
                     ->where('company', $companyId)
-                    ->whereIn('loans.status',[5,6,7,12])
+                    ->whereIn('loans.status', [5, 6, 7, 12])
                     ->get();
 
                 $totalDisbursedProduct = $loans->sum('principal_amount');
                 $totalRepaidProduct = $loans->sum('loan_paid');
                 $totalOutstandingProduct = $loans->sum(function ($loan) {
-                    return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                    return ($loan->total_loan) - ($loan->loan_paid ?? 0);
                 });
 
                 $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
@@ -320,7 +320,7 @@ class PortfolioReportController extends BaseController
                 'branch_name' => $branch->branch_name,
                 'total_loans' => $loans->count(),
                 'total_outstanding' => (float) $loans->sum(function ($loan) {
-                    return ($loan->total_loan ) - ($loan->loan_paid ?? 0);
+                    return ($loan->total_loan) - ($loan->loan_paid ?? 0);
                 }),
             ];
         }
@@ -347,7 +347,7 @@ class PortfolioReportController extends BaseController
                     'product_name' => $product->product_name,
                     'total_loans' => $loans->count(),
                     'total_outstanding' => (float) $loans->sum(function ($loan) {
-                        return ($loan->total_loan ) - ($loan->loan_paid ?? 0);
+                        return ($loan->total_loan) - ($loan->loan_paid ?? 0);
                     }),
                     'average_loan_size' => (float) ($loans->sum('principal_amount') / $loans->count()),
                 ];
