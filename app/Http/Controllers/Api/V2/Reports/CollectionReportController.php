@@ -160,12 +160,13 @@ class CollectionReportController extends BaseController
 
             foreach ($loans as $loan) {
                 $daysOverdue = Carbon::parse($loan->end_date)->diffInDays(now());
-                $outstandingBalance = ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                $outstandingBalance = ($loan->total_loan) - ($loan->loan_paid ?? 0);
 
                 // Get last payment
-                $lastPayment = PaymentSubmissions::where('loan_number', $loan->loan_number)
+                $lastPayment = PaymentSubmissions::join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                    ->where('payment_submissions.loan_number', $loan->loan_number)
                     ->where('submission_status', 11)
-                    ->orderBy('submitted_date', 'desc')
+                    ->orderBy('loan_payment_schedule.payment_due_date', 'desc')
                     ->first();
 
                 $overdueLoans[] = [

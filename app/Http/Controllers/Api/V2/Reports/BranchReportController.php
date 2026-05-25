@@ -16,13 +16,29 @@ use Illuminate\Support\Facades\Log;
 
 class BranchReportController extends BaseController
 {
+
+
     /**
-     * Branch Performance Report
+     * Branch Performance Report - Simplified & Focused
      */
     public function branchPerformance(Request $request)
     {
         try {
             $companyId = $this->getCompanyId();
+
+            // Get date range from request
+            $fromDate = $request->input('from_date');
+            $toDate = $request->input('to_date');
+
+            // Parse dates
+            $startDate = $fromDate ? Carbon::parse($fromDate)->startOfDay() : null;
+            $endDate = $toDate ? Carbon::parse($toDate)->endOfDay() : null;
+
+            // If no dates provided, default to current month
+            if (!$startDate && !$endDate) {
+                $startDate = Carbon::now()->startOfMonth();
+                $endDate = Carbon::now()->endOfDay();
+            }
 
             $branches = BranchModel::where('company', $companyId)->get();
             $result = [];
@@ -31,66 +47,143 @@ class BranchReportController extends BaseController
                 // Get zones under this branch
                 $zoneIds = Zone::where('branch', $branch->id)->pluck('id');
 
-                // Get customers in these zones
-                $customersCount = CustomersZone::whereIn('zone_id', $zoneIds)
-                    ->where('company_id', $companyId)
-                    ->count();
+                if ($zoneIds->isEmpty()) {
+                    continue;
+                }
 
-                // Get loans in these zones
-                $loans = Loans::whereIn('zone', $zoneIds)
-                    ->where('company', $companyId)
-                    ->whereIn('loans.status',[5,6,7,12])
+                // ========== STEP 1: Get ALL schedules due in the period ==========
+                $schedulesQuery = DB::table('loan_payment_schedule')
+                    ->whereIn('zone', $zoneIds)
+                    ->where('status', 1); // Active schedules
+
+                if ($startDate && $endDate) {
+                    $schedulesQuery->whereBetween('payment_due_date', [$startDate, $endDate]);
+                } elseif ($startDate) {
+                    $schedulesQuery->where('payment_due_date', '>=', $startDate);
+                } elseif ($endDate) {
+                    $schedulesQuery->where('payment_due_date', '<=', $endDate);
+                }
+
+                $schedules = $schedulesQuery->get();
+
+                // Get unique loan IDs from these schedules
+                $loanIds = $schedules->pluck('loan_number')->unique()->filter()->values();
+
+                // ========== STEP 2: Get loan details for these unique loans ==========
+                $loans = [];
+                $totalDisbursed = 0;
+                $totalLoanInterest = 0;
+                $activeLoansCount = 0;
+
+                if ($loanIds->isNotEmpty()) {
+                    $loansData = Loans::whereIn('loan_number', $loanIds)
+                        ->where('company', $companyId)
+                        ->get();
+
+                    foreach ($loansData as $loan) {
+                        $loans[$loan->loan_number] = $loan;
+                        $totalDisbursed += $loan->principal_amount;
+                        $totalLoanInterest += $loan->interest_amount;
+
+                        // Check if loan is active (Active or Overdue status)
+                        if (in_array($loan->status, [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])) {
+                            $activeLoansCount++;
+                        }
+                    }
+                }
+
+                // ========== STEP 3: Expected target from schedules ==========
+                $expectedPrincipal = $schedules->sum('payment_principal_amount');
+                $expectedInterest = $schedules->sum('payment_interest_amount');
+                $expectedTotal = $schedules->sum('payment_total_amount');
+
+                // ========== STEP 4: Collections from expected schedules ==========
+                $scheduleIds = $schedules->pluck('id')->filter()->values();
+
+                $payments = PaymentSubmissions::whereIn('schedule_id', $scheduleIds)
+                    ->where('submission_status', 11) // Approved/Completed
+                    //->whereBetween('created_at', [$startDate, $endDate])
                     ->get();
 
-                $totalDisbursed = $loans->sum('principal_amount');
-                $totalRepaid = $loans->sum('loan_paid');
-                $outstandingBalance = $loans->sum(function ($loan) {
-                    return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
-                });
+                // Use paid_principal and paid_interest from payment submissions
+                $collectedPrincipal = $payments->sum('paid_principal');
+                $collectedInterest = $payments->sum('paid_interest');
+                $collectedTotal = $payments->sum('amount');
 
-                $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
+                // ========== STEP 5: Collection efficiency ==========
+                $collectionEfficiency = $expectedTotal > 0
+                    ? round(($collectedTotal / $expectedTotal) * 100, 2)
+                    : 0;
 
-                // Calculate collection efficiency for current month
-                $currentMonthStart = Carbon::now()->startOfMonth();
-                $expectedCollection = DB::table('loan_payment_schedule')
-                    ->whereIn('zone', $zoneIds)
-                    ->whereBetween('payment_due_date', [$currentMonthStart, Carbon::now()])
-                    ->sum('payment_total_amount');
+                $principalEfficiency = $expectedPrincipal > 0
+                    ? round(($collectedPrincipal / $expectedPrincipal) * 100, 2)
+                    : 0;
 
-                $actualCollection = PaymentSubmissions::whereIn('zone', $zoneIds)
-                    ->where('company', $companyId)
-                    ->where('submission_status', 11)
-                    ->whereBetween('submitted_date', [$currentMonthStart, Carbon::now()])
-                    ->sum('amount');
+                $interestEfficiency = $expectedInterest > 0
+                    ? round(($collectedInterest / $expectedInterest) * 100, 2)
+                    : 0;
 
-                $collectionEfficiency = $expectedCollection > 0 ? round(($actualCollection / $expectedCollection) * 100, 2) : 0;
+                // ========== STEP 6: Active customers (with loans in this period) ==========
+                $customerIds = [];
+                if ($loanIds->isNotEmpty()) {
+                    $customerIds = Loans::whereIn('loan_number', $loanIds)
+                        ->where('company', $companyId)
+                        ->pluck('customer')
+                        ->unique()
+                        ->filter()
+                        ->values()
+                        ->toArray();
+                }
 
-                // Calculate default rate
-                $defaultedLoans = $loans->where('status', Loans::STATUS_DEFAULTED)->count();
-                $defaultRate = $loans->count() > 0 ? round(($defaultedLoans / $loans->count()) * 100, 2) : 0;
+                $activeCustomers = count($customerIds);
 
                 $result[] = [
                     'branch_name' => $branch->branch_name,
                     'branch_id' => $branch->id,
-                    'active_customers' => $customersCount,
-                    'total_loans' => $loans->count(),
-                    'active_loans' => $activeLoans,
+
+                    // Loan Portfolio Metrics
+                    'active_loans' => $activeLoansCount,
+                    'active_customers' => $activeCustomers,
                     'total_disbursed' => (float) $totalDisbursed,
-                    'total_collected' => (float) $totalRepaid,
-                    'outstanding_balance' => (float) $outstandingBalance,
+                    'total_interest' => (float) $totalLoanInterest,
+
+                    // Expected Collection (Target)
+                    'expected_principal' => (float) $expectedPrincipal,
+                    'expected_interest' => (float) $expectedInterest,
+                    'expected_total' => (float) $expectedTotal,
+
+                    // Actual Collection
+                    'collected_principal' => (float) $collectedPrincipal,
+                    'collected_interest' => (float) $collectedInterest,
+                    'collected_total' => (float) $collectedTotal,
+
+                    // Collection Efficiencies
+                    'principal_efficiency' => $principalEfficiency,
+                    'interest_efficiency' => $interestEfficiency,
                     'collection_efficiency' => $collectionEfficiency,
-                    'default_rate' => $defaultRate,
+
+                    // Additional Info
+                    'total_schedules' => $schedules->count(),
+                    'paid_schedules' => $payments->count(),
+                    'period_start' => $startDate->toDateString(),
+                    'period_end' => $endDate->toDateString(),
                 ];
             }
 
+            // Sort by collection efficiency
+            usort($result, function ($a, $b) {
+                return $b['collection_efficiency'] <=> $a['collection_efficiency'];
+            });
+
             return $this->successResponse($result, 'Branch performance retrieved successfully');
         } catch (\Exception $e) {
+            Log::error('Branch Performance Error: ' . $e->getMessage());
             return $this->errorResponse('Failed to load branch performance: ' . $e->getMessage(), 500);
         }
     }
 
     /**
-     * Zone Officer Performance Report
+     * Zone Officer Performance Report - Simplified & Focused
      */
     public function zonePerformance(Request $request)
     {
@@ -98,77 +191,155 @@ class BranchReportController extends BaseController
             $companyId = $this->getCompanyId();
             $userBranches = $this->getUserBranches();
 
+            // Get date range from request
+            $fromDate = $request->input('from_date');
+            $toDate = $request->input('to_date');
+
+            // Parse dates
+            $startDate = $fromDate ? Carbon::parse($fromDate)->startOfDay() : null;
+            $endDate = $toDate ? Carbon::parse($toDate)->endOfDay() : null;
+
+            // If no dates provided, default to current month
+            if (!$startDate && !$endDate) {
+                $startDate = Carbon::now()->startOfMonth();
+                $endDate = Carbon::now()->endOfDay();
+            }
+
             $query = Zone::whereHas('zone_branch', function ($q) use ($companyId, $userBranches) {
                 $q->where('company', $companyId);
-                if (!empty($userBranches) && !$this->isManager()) {
+                if (!empty($userBranches)) {
                     $q->whereIn('id', $userBranches);
                 }
             })->with(['zone_branch', 'zone_officers']);
 
             $zones = $query->get();
-
             $result = [];
 
             foreach ($zones as $zone) {
-                // Get customers in this zone
-                $customersCount = CustomersZone::where('zone_id', $zone->id)
-                    ->where('company_id', $companyId)
-                    ->count();
+                // ========== STEP 1: Get ALL schedules due in the period for this zone ==========
+                $schedulesQuery = DB::table('loan_payment_schedule')
+                    ->where('zone', $zone->id)
+                    ->where('status', 1); // Active schedules
 
-                // Get loans in this zone
-                $loans = Loans::where('zone', $zone->id)
-                    ->where('company', $companyId)
-                    ->whereIn('loans.status',[5,6,7,12])
+                if ($startDate && $endDate) {
+                    $schedulesQuery->whereBetween('payment_due_date', [$startDate, $endDate]);
+                } elseif ($startDate) {
+                    $schedulesQuery->where('payment_due_date', '>=', $startDate);
+                } elseif ($endDate) {
+                    $schedulesQuery->where('payment_due_date', '<=', $endDate);
+                }
+
+                $schedules = $schedulesQuery->get();
+
+                // Get unique loan IDs from these schedules
+                $loanIds = $schedules->pluck('loan_number')->unique()->filter()->values();
+
+                // ========== STEP 2: Get loan details for these unique loans ==========
+                $totalDisbursed = 0;
+                $totalLoanInterest = 0;
+                $activeLoansCount = 0;
+                $customersSet = [];
+
+                if ($loanIds->isNotEmpty()) {
+                    $loansData = Loans::whereIn('loan_number', $loanIds)
+                        ->where('company', $companyId)
+                        ->get();
+
+                    foreach ($loansData as $loan) {
+                        $totalDisbursed += $loan->principal_amount;
+                        $totalLoanInterest += $loan->interest_amount;
+
+                        // Track unique customers
+                        if ($loan->customer) {
+                            $customersSet[$loan->customer] = true;
+                        }
+
+                        // Check if loan is active (Active or Overdue status)
+                        if (in_array($loan->status, [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])) {
+                            $activeLoansCount++;
+                        }
+                    }
+                }
+
+                $activeCustomers = count($customersSet);
+
+                // ========== STEP 3: Expected target from schedules ==========
+                $expectedPrincipal = $schedules->sum('principal_amount');
+                $expectedInterest = $schedules->sum('interest_amount');
+                $expectedTotal = $schedules->sum('payment_total_amount');
+
+                // ========== STEP 4: Collections from expected schedules ==========
+                $scheduleIds = $schedules->pluck('id')->filter()->values();
+
+                $payments = PaymentSubmissions::whereIn('schedule_id', $scheduleIds)
+                    ->where('submission_status', 11) // Approved/Completed
+                    ->whereBetween('created_at', [$startDate, $endDate])
                     ->get();
 
-                $totalDisbursed = $loans->sum('principal_amount');
-                $totalRepaid = $loans->sum('loan_paid');
-                $outstandingBalance = $loans->sum(function ($loan) {
-                    return ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
-                });
+                // Use paid_principal and paid_interest from payment submissions
+                $collectedPrincipal = $payments->sum('paid_principal');
+                $collectedInterest = $payments->sum('paid_interest');
+                $collectedTotal = $payments->sum('amount');
 
-                $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
+                // ========== STEP 5: Collection efficiency ==========
+                $collectionEfficiency = $expectedTotal > 0
+                    ? round(($collectedTotal / $expectedTotal) * 100, 2)
+                    : 0;
 
-                // Calculate collection efficiency
-                $currentMonthStart = Carbon::now()->startOfMonth();
-                $expectedCollection = DB::table('loan_payment_schedule')
-                    ->where('zone', $zone->id)
-                    ->whereBetween('payment_due_date', [$currentMonthStart, Carbon::now()])
-                    //add schedule status condition
-                    ->sum('payment_total_amount');
+                $principalEfficiency = $expectedPrincipal > 0
+                    ? round(($collectedPrincipal / $expectedPrincipal) * 100, 2)
+                    : 0;
 
-                $actualCollection = PaymentSubmissions::where('zone', $zone->id)
-                    ->where('company', $companyId)
-                    ->where('submission_status', 11)
-                    ->whereBetween('submitted_date', [$currentMonthStart, Carbon::now()])
-                    ->sum('amount');
+                $interestEfficiency = $expectedInterest > 0
+                    ? round(($collectedInterest / $expectedInterest) * 100, 2)
+                    : 0;
 
-                $collectionEfficiency = $expectedCollection > 0 ? round(($actualCollection / $expectedCollection) * 100, 2) : 0;
-
-                // Calculate default rate
-                $defaultedLoans = $loans->where('status', Loans::STATUS_DEFAULTED)->count();
-                $defaultRate = $loans->count() > 0 ? round(($defaultedLoans / $loans->count()) * 100, 2) : 0;
-                //Log::info("Zone Branch : ", [$zone->zone_branch]);
+                // ========== STEP 6: Get officer names ==========
                 $officers = $zone->zone_officers->map(fn($o) => $o->first_name . ' ' . $o->last_name)->join(', ');
 
                 $result[] = [
                     'zone_name' => $zone->zone_name,
                     'zone_id' => $zone->id,
                     'branch_name' => $zone->zone_branch->branch_name ?? 'N/A',
-                    'officer_name' => $officers, // You can fetch from users if available
-                    'total_customers' => $customersCount,
-                    'total_loans' => $loans->count(),
-                    'active_loans' => $activeLoans,
+                    'officer_name' => $officers ?: 'Not Assigned',
+
+                    // Loan Portfolio Metrics
+                    'active_loans' => $activeLoansCount,
+                    'active_customers' => $activeCustomers,
                     'total_disbursed' => (float) $totalDisbursed,
-                    'total_collected' => (float) $totalRepaid,
-                    'outstanding_balance' => (float) $outstandingBalance,
+                    'total_interest' => (float) $totalLoanInterest,
+
+                    // Expected Collection (Target)
+                    'expected_principal' => (float) $expectedPrincipal,
+                    'expected_interest' => (float) $expectedInterest,
+                    'expected_total' => (float) $expectedTotal,
+
+                    // Actual Collection
+                    'collected_principal' => (float) $collectedPrincipal,
+                    'collected_interest' => (float) $collectedInterest,
+                    'collected_total' => (float) $collectedTotal,
+
+                    // Collection Efficiencies
+                    'principal_efficiency' => $principalEfficiency,
+                    'interest_efficiency' => $interestEfficiency,
                     'collection_efficiency' => $collectionEfficiency,
-                    'default_rate' => $defaultRate,
+
+                    // Additional Info
+                    'total_schedules' => $schedules->count(),
+                    'paid_schedules' => $payments->count(),
+                    'period_start' => $startDate->toDateString(),
+                    'period_end' => $endDate->toDateString(),
                 ];
             }
 
+            // Sort by collection efficiency
+            usort($result, function ($a, $b) {
+                return $b['collection_efficiency'] <=> $a['collection_efficiency'];
+            });
+
             return $this->successResponse($result, 'Zone performance retrieved successfully');
         } catch (\Exception $e) {
+            Log::error('Zone Performance Error: ' . $e->getMessage());
             return $this->errorResponse('Failed to load zone performance: ' . $e->getMessage(), 500);
         }
     }

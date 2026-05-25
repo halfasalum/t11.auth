@@ -238,7 +238,7 @@ class PortfolioReportController extends BaseController
                     $daysOverdue = max(0, Carbon::parse($loan->end_date)->diffInDays(now()));
                 }
 
-                $outstandingBalance = ($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0);
+                $outstandingBalance = ($loan->total_loan) - ($loan->loan_paid ?? 0);
 
                 $loanData = [
                     'loan_number' => $loan->loan_number,

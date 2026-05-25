@@ -252,6 +252,7 @@ class LoanController extends BaseController
                 'balance'    => $this->parseNumber($balance),
                 'is_overdue' => Carbon::parse($schedule->payment_due_date)->isPast() && $balance > 0,
                 'is_paid'    => $balance <= 0,
+                'overdue_flag'    => $schedule->overdue_flag,
             ];
         });
 
