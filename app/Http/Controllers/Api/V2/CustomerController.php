@@ -1560,7 +1560,7 @@ class CustomerController extends Controller
                 if (sizeof($customerData) > 0) {
                     foreach ($customerData as $customer) {
                         $freeLoanCustomer = Loans::where('customer', [$customer->id])
-                            ->whereIn('status', [4, 5])
+                            ->whereIn('status', [4, 5, 7, 12, 13, 14])
                             ->get();
                         if (sizeof($freeLoanCustomer) == 0) {
                             $customers[] = $customer;

@@ -638,4 +638,298 @@ class BankController extends Controller
         }
     }
 
+
+    /**
+     * Deposit money to an account
+     */
+    public function deposit(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'account_id' => 'required|exists:accounts,id',
+                'amount' => 'required|numeric|min:0.01',
+                'deposit_date' => 'required|date',
+                'reference_number' => 'nullable|string|max:100',
+                'description' => 'nullable|string|max:500',
+                'payment_method' => 'nullable|string|in:cash,cheque,bank_transfer,mobile_money',
+            ]);
+
+            $user = JWTAuth::parseToken()->getPayload();
+            $userCompany = $user->get('company');
+            $userId = $user->get('user_id');
+
+            // Get the account
+            $account = Accounts::where('id', $validated['account_id'])
+                ->where('company_id', $userCompany)
+                ->first();
+
+            if (!$account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Account not found',
+                ], 404);
+            }
+
+            // Register the deposit transaction
+            $this->registerTransaction(
+                $account->id,
+                $validated['amount'],
+                'credit',
+                $validated['deposit_date'],
+                false,
+                $account->branch_id,
+                $account->zone_id,
+                null,
+                null,
+                null,
+                $validated['description'] ?? 'Deposit to account'
+            );
+
+            // Create additional deposit record if needed
+            $depositRecord = DB::table('account_deposits')->insert([
+                'account_id' => $account->id,
+                'amount' => $validated['amount'],
+                'deposit_date' => $validated['deposit_date'],
+                'reference_number' => $validated['reference_number'] ?? $this->generateReferenceNumber(),
+                'payment_method' => $validated['payment_method'] ?? 'cash',
+                'description' => $validated['description'],
+                'registered_by' => $userId,
+                'company_id' => $userCompany,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Deposit completed successfully',
+                'data' => [
+                    'account' => $account->fresh(),
+                    'amount' => $validated['amount'],
+                    'new_balance' => $account->fresh()->account_balance,
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Failed to process deposit: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process deposit: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Transfer money between accounts
+     */
+    public function transfer(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'from_account_id' => 'required|exists:accounts,id',
+                'to_account_id' => 'required|exists:accounts,id|different:from_account_id',
+                'amount' => 'required|numeric|min:0.01',
+                'transfer_date' => 'required|date',
+                'reference_number' => 'nullable|string|max:100',
+                'description' => 'nullable|string|max:500',
+            ]);
+
+            $user = JWTAuth::parseToken()->getPayload();
+            $userCompany = $user->get('company');
+            $userId = $user->get('user_id');
+
+            // Get both accounts
+            $fromAccount = Accounts::where('id', $validated['from_account_id'])
+                ->where('company_id', $userCompany)
+                ->first();
+
+            $toAccount = Accounts::where('id', $validated['to_account_id'])
+                ->where('company_id', $userCompany)
+                ->first();
+
+            if (!$fromAccount || !$toAccount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'One or both accounts not found',
+                ], 404);
+            }
+
+            // Check sufficient balance in source account
+            if ($fromAccount->account_balance < $validated['amount']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Insufficient balance in source account: {$fromAccount->account_name}",
+                    'data' => [
+                        'available_balance' => $fromAccount->account_balance,
+                        'required_amount' => $validated['amount'],
+                        'shortfall' => $validated['amount'] - $fromAccount->account_balance,
+                    ],
+                ], 422);
+            }
+
+            DB::transaction(function () use ($fromAccount, $toAccount, $validated, $userId, $userCompany) {
+                // Register debit from source account
+                $this->registerTransaction(
+                    $fromAccount->id,
+                    $validated['amount'],
+                    'debit',
+                    $validated['transfer_date'],
+                    false,
+                    $fromAccount->branch_id,
+                    $fromAccount->zone_id,
+                    null,
+                    null,
+                    null,
+                    "Transfer to {$toAccount->account_name}: {$validated['description']}"
+                );
+
+                // Register credit to destination account
+                $this->registerTransaction(
+                    $toAccount->id,
+                    $validated['amount'],
+                    'credit',
+                    $validated['transfer_date'],
+                    false,
+                    $toAccount->branch_id,
+                    $toAccount->zone_id,
+                    null,
+                    null,
+                    null,
+                    "Transfer from {$fromAccount->account_name}: {$validated['description']}"
+                );
+
+                // Create transfer record
+                DB::table('account_transfers')->insert([
+                    'from_account_id' => $fromAccount->id,
+                    'to_account_id' => $toAccount->id,
+                    'amount' => $validated['amount'],
+                    'transfer_date' => $validated['transfer_date'],
+                    'reference_number' => $validated['reference_number'] ?? $this->generateReferenceNumber(),
+                    'description' => $validated['description'],
+                    'registered_by' => $userId,
+                    'company_id' => $userCompany,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Transfer completed successfully',
+                'data' => [
+                    'from_account' => $fromAccount->fresh(),
+                    'to_account' => $toAccount->fresh(),
+                    'amount' => $validated['amount'],
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Failed to process transfer: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process transfer: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get transaction history for an account
+     */
+    public function getTransactionHistory(Request $request, $accountId)
+    {
+        try {
+            $user = JWTAuth::parseToken()->getPayload();
+            $userCompany = $user->get('company');
+
+            $account = Accounts::where('id', $accountId)
+                ->where('company_id', $userCompany)
+                ->first();
+
+            if (!$account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Account not found',
+                ], 404);
+            }
+
+            $perPage = $request->get('per_page', 20);
+            $startDate = $request->get('start_date');
+            $endDate = $request->get('end_date');
+
+            $query = AccountHistory::where('account_id', $accountId)
+                ->with(['registeredBy'])
+                ->orderBy('transaction_date', 'desc')
+                ->orderBy('created_at', 'desc');
+
+            if ($startDate) {
+                $query->whereDate('transaction_date', '>=', $startDate);
+            }
+            if ($endDate) {
+                $query->whereDate('transaction_date', '<=', $endDate);
+            }
+
+            $transactions = $query->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'account' => $account,
+                    'transactions' => $transactions,
+                    'summary' => [
+                        'total_credits' => (float) $query->where('transaction_type', 'credit')->sum('transaction_amount'),
+                        'total_debits' => (float) abs($query->where('transaction_type', 'debit')->sum('transaction_amount')),
+                    ],
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch transaction history: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch transaction history',
+            ], 500);
+        }
+    }
+
+    /**
+     * Get account details
+     */
+    public function getAccount($id)
+    {
+        try {
+            $user = JWTAuth::parseToken()->getPayload();
+            $userCompany = $user->get('company');
+
+            $account = Accounts::with(['branch', 'zone', 'parentAccount'])
+                ->where('id', $id)
+                ->where('company_id', $userCompany)
+                ->first();
+
+            if (!$account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Account not found',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $account,
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('Failed to fetch account: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch account',
+            ], 500);
+        }
+    }
 }

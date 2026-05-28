@@ -1728,14 +1728,21 @@ class Dashboard extends BaseController
             ->take(10)
             ->values();
 
+        $totalPortfolio = $this->getCompanyLoans($companyId)['total_portfolio'] ?? 0;
+
         return [
             'score_distribution' => $scoreDistribution,
             'high_risk_customers' => $highRiskCustomers,
             'delinquency_by_product' => $delinquencyByProduct,
             'top_exposure' => $topExposure,
             'concentration_risk' => [
-                'top_5_percentage' => $topExposure->take(5)->sum('total_outstanding') / ($this->getCompanyLoans($companyId)['total_portfolio'] ?? 1) * 100,
-                'top_10_percentage' => $topExposure->sum('total_outstanding') / ($this->getCompanyLoans($companyId)['total_portfolio'] ?? 1) * 100,
+                'top_5_percentage' => $totalPortfolio > 0
+                    ? ($topExposure->take(5)->sum('total_outstanding') / $totalPortfolio) * 100
+                    : 0,
+
+                'top_10_percentage' => $totalPortfolio > 0
+                    ? ($topExposure->sum('total_outstanding') / $totalPortfolio) * 100
+                    : 0,
             ],
         ];
     }

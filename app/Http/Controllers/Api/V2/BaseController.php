@@ -24,6 +24,14 @@ class BaseController
     {
         return $this->getUserPayload()['user_id'];
     }
+
+    /**
+     * Get authenticated user's name
+     */
+    protected function getUserName(): string
+    {
+        return $this->getUserPayload()['name'];
+    }
     
     /**
      * Get authenticated user's company ID

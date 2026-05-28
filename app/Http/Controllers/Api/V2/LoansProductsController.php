@@ -37,6 +37,43 @@ class LoansProductsController extends BaseController
                 'penalty_percentage' => 'bail|nullable|required_if:penalty_type,2|numeric|min:0',
                 'skip_sat' => 'bail|required',
                 'skip_sun' => 'bail|required',
+                // Add to the validation array in register() and update() methods
+
+                // Workflow Settings
+                'default_days_overdue' => 'nullable|integer|min:1',
+                'default_missed_payments' => 'nullable|integer|min:1',
+                'default_percentage_of_term' => 'nullable|integer|min:0|max:100',
+
+                'write_off_enabled' => 'boolean',
+                'write_off_days_overdue' => 'nullable|integer|min:1',
+                'write_off_missed_payments' => 'nullable|integer|min:1',
+                'write_off_requires_approval' => 'boolean',
+                'write_off_approval_level' => 'nullable|string|in:supervisor,manager,director,board',
+                'write_off_auto_process' => 'boolean',
+                'write_off_recovery_attempts' => 'nullable|integer|min:0',
+
+                'foreclosure_enabled' => 'boolean',
+                'foreclosure_days_overdue' => 'nullable|integer|min:1',
+                'foreclosure_missed_payments' => 'nullable|integer|min:1',
+                'foreclosure_requires_collateral' => 'boolean',
+                'foreclosure_legal_required' => 'boolean',
+                'foreclosure_approval_level' => 'nullable|string|in:manager,director,legal',
+                'foreclosure_notice_days' => 'nullable|integer|min:1',
+                'foreclosure_redemption_period' => 'nullable|integer|min:0',
+
+                'restructure_enabled' => 'boolean',
+                'restructure_days_overdue' => 'nullable|integer|min:1',
+                'restructure_max_times' => 'nullable|integer|min:0',
+                'restructure_approval_level' => 'nullable|string|in:supervisor,manager,director',
+
+                'notify_on_overdue_days' => 'nullable|integer|min:1',
+                'notify_on_default' => 'boolean',
+                'notify_on_write_off' => 'boolean',
+                'notify_on_foreclosure' => 'boolean',
+
+                'recovery_enabled' => 'boolean',
+                'recovery_max_attempts' => 'nullable|integer|min:1',
+                'recovery_assign_to_agency_days' => 'nullable|integer|min:1',
             ]);
 
             $validated['registered_by'] = $this->getUserId();
@@ -80,6 +117,43 @@ class LoansProductsController extends BaseController
                 'penalty_percentage' => 'bail|nullable|required_if:penalty_type,2|numeric|min:0',
                 'skip_sat' => 'bail|required',
                 'skip_sun' => 'bail|required',
+                // Add to the validation array in register() and update() methods
+
+                // Workflow Settings
+                'default_days_overdue' => 'nullable|integer|min:1',
+                'default_missed_payments' => 'nullable|integer|min:1',
+                'default_percentage_of_term' => 'nullable|integer|min:0|max:100',
+
+                'write_off_enabled' => 'boolean',
+                'write_off_days_overdue' => 'nullable|integer|min:1',
+                'write_off_missed_payments' => 'nullable|integer|min:1',
+                'write_off_requires_approval' => 'boolean',
+                'write_off_approval_level' => 'nullable|string|in:supervisor,manager,director,board',
+                'write_off_auto_process' => 'boolean',
+                'write_off_recovery_attempts' => 'nullable|integer|min:0',
+
+                'foreclosure_enabled' => 'boolean',
+                'foreclosure_days_overdue' => 'nullable|integer|min:1',
+                'foreclosure_missed_payments' => 'nullable|integer|min:1',
+                'foreclosure_requires_collateral' => 'boolean',
+                'foreclosure_legal_required' => 'boolean',
+                'foreclosure_approval_level' => 'nullable|string|in:manager,director,legal',
+                'foreclosure_notice_days' => 'nullable|integer|min:1',
+                'foreclosure_redemption_period' => 'nullable|integer|min:0',
+
+                'restructure_enabled' => 'boolean',
+                'restructure_days_overdue' => 'nullable|integer|min:1',
+                'restructure_max_times' => 'nullable|integer|min:0',
+                'restructure_approval_level' => 'nullable|string|in:supervisor,manager,director',
+
+                'notify_on_overdue_days' => 'nullable|integer|min:1',
+                'notify_on_default' => 'boolean',
+                'notify_on_write_off' => 'boolean',
+                'notify_on_foreclosure' => 'boolean',
+
+                'recovery_enabled' => 'boolean',
+                'recovery_max_attempts' => 'nullable|integer|min:1',
+                'recovery_assign_to_agency_days' => 'nullable|integer|min:1',
             ]);
 
             $product = LoansProducts::where('id', $validated['id'])
@@ -200,7 +274,7 @@ class LoansProductsController extends BaseController
     /**
      * Get product details and optionally send token to customer
      */
-    public function productDetails($product_id, $customer = null): JsonResponse
+    /* public function productDetails($product_id, $customer = null): JsonResponse
     {
         try {
             $user_company = $this->getCompanyId();
@@ -248,6 +322,64 @@ class LoansProductsController extends BaseController
         } catch (\Exception $e) {
             Log::error('Failed to retrieve product details: ' . $e->getMessage());
             return $this->errorResponse('Failed to retrieve product details', 500);
+        }
+    } */
+    /**
+     * Get product details and optionally send token to customer
+     */
+    public function productDetails($product_id, $customer = null): JsonResponse
+    {
+        try {
+            $user_company = $this->getCompanyId();
+            $user_id = $this->getUserId();
+
+            if ($customer) {
+                Log::info('Customer ID: ' . $customer);
+                $customerData = Customers::where('id', $customer)->first();
+                Log::info('Customer Data: ' . json_encode($customerData));
+
+                if ($customerData) {
+                    $phone = $customerData->phone;
+                    $token = rand(111111, 999999);
+                    $message = "Habari, tokeni ya mkopo ni $token. \nUsitume tokeni hii kwa mtu yeyote kama hujaomba mkopo.";
+
+                    $active_token = LoanToken::where('loan_customer', $customerData->id)
+                        ->where('status', 1)
+                        ->where('company', $user_company)
+                        ->first();
+                    Log::info('Active Token: ' . json_encode($active_token));
+
+                    if (!$active_token) {
+                        LoanToken::create([
+                            'loan_sms' => $message,
+                            'loan_token' => $token,
+                            'loan_customer' => $customer,
+                            'company' => $user_company,
+                            'status' => 1,
+                            'user' => $user_id,
+                        ]);
+
+                        $notification = new Notifications();
+                        $notification->sendSMS($phone, $message);
+                        Log::info('Token sent successfully');
+                    }
+                }
+            }
+
+            // Get the product with all fields including workflow settings
+            $product = LoansProducts::where("id", $product_id)
+                ->where("company", $user_company)
+                ->first();
+
+            if (!$product) {
+                return $this->errorResponse('Product not found', 404);
+            }
+
+            // Return the entire product with all attributes
+            return $this->successResponse($product, 'Product details retrieved successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to retrieve product details: ' . $e->getMessage());
+            return $this->errorResponse('Failed to retrieve product details: ' . $e->getMessage(), 500);
         }
     }
 }

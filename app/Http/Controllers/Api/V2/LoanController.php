@@ -20,16 +20,19 @@ use App\Http\Controllers\Api\V2\BaseController;
 use App\Http\Controllers\BankController;
 use App\Models\Accounts;
 use App\Models\Collateral;
+use App\Services\NotificationService;
 use DateTime;
 use Illuminate\Support\Facades\Log;
 
 class LoanController extends BaseController
 {
     protected $userLogService;
+    protected $notificationService;
 
-    public function __construct(UserLogService $userLogService)
+    public function __construct(UserLogService $userLogService, NotificationService $notificationService)
     {
         $this->userLogService = $userLogService;
+        $this->notificationService = $notificationService;
     }
 
     // ====================== LOAN LISTING ======================
@@ -251,7 +254,7 @@ class LoanController extends BaseController
                 'paid'       => $paid,
                 'balance'    => $this->parseNumber($balance),
                 'is_overdue' => Carbon::parse($schedule->payment_due_date)->isPast() && $balance > 0,
-                'is_paid'    => $balance <= 0,
+                'is_paid'    => $paid > 0,
                 'overdue_flag'    => $schedule->overdue_flag,
             ];
         });
@@ -592,7 +595,7 @@ class LoanController extends BaseController
             'created_at'        => $loan->created_at,
             'status'            => $loan->status,
             'status_label'      => $this->getStatusLabel($loan->status),
-            'balance'           => $this->parseNumber(($loan->total_loan + ($loan->penalty_amount ?? 0)) - ($loan->loan_paid ?? 0)),
+            'balance'           => $this->parseNumber(($loan->total_loan) - ($loan->loan_paid ?? 0)),
         ];
 
 
@@ -993,7 +996,7 @@ class LoanController extends BaseController
             );
 
             // Calculate summary statistics
-            $summary = $this->calculateSummary($installments, $totalLoanAmount);
+            $summary = $this->calculateSummary($installments, $totalLoanAmount, $loan);
 
             return response()->json([
                 'success' => true,
@@ -1201,7 +1204,9 @@ class LoanController extends BaseController
         $year = date('Y');
         $nextYear = $year + 1;
 
-        return [
+        return [];
+
+        /* return [
             "{$year}-01-01", // New Year
             "{$year}-01-12", // Zanzibar Revolution Day
             "{$year}-04-07", // Sheikh Abeid Amani Karume Day
@@ -1214,13 +1219,13 @@ class LoanController extends BaseController
             "{$year}-12-25", // Christmas Day
             "{$year}-12-26", // Boxing Day
             "{$nextYear}-01-01", // Next year New Year
-        ];
+        ]; */
     }
 
     /**
      * Calculate summary statistics
      */
-    private function calculateSummary(array $installments, float $totalLoanAmount): array
+    private function calculateSummary(array $installments, float $totalLoanAmount, $loan = null): array
     {
         $totalAmount = array_sum(array_column($installments, 'amount'));
         $totalPrincipal = array_sum(array_column($installments, 'principal'));
@@ -1228,8 +1233,8 @@ class LoanController extends BaseController
 
         return [
             'total_to_pay' => round($totalAmount, 2),
-            'total_principal' => round($totalPrincipal, 2),
-            'total_interest' => round($totalInterest, 2),
+            'total_principal' => round($loan->principal_amount, 2),
+            'total_interest' => round($loan->interest_amount, 2),
             'average_installment' => round($totalAmount / count($installments), 2),
             'interest_rate' => round((($totalAmount - $totalLoanAmount) / $totalLoanAmount) * 100, 2)
         ];
@@ -1679,5 +1684,588 @@ class LoanController extends BaseController
         $schedule->update(['status' => 3]);
 
         return $this->successResponse([], 'Schedule deleted successfully');
+    }
+
+
+    /**
+     * Write off a loan
+     */
+    public function writeOff(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'reason' => 'required|string|min:3',
+                'amount' => 'sometimes|numeric|min:0',
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            // Check if loan can be written off
+            if (!in_array($loan->status, [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_DEFAULTED])) {
+                return $this->errorResponse('Loan cannot be written off in its current status', 422);
+            }
+
+            // Check if already written off
+            if ($loan->status === Loans::STATUS_WRITTEN_OFF) {
+                return $this->errorResponse('Loan is already written off', 422);
+            }
+
+            $writeOffAmount = $validated['amount'] ?? (max($loan->total_loan - $loan->loan_paid, 0));
+
+            DB::beginTransaction();
+
+            // Update loan status
+            $loan->status = Loans::STATUS_WRITTEN_OFF;
+            $loan->written_off_date = Carbon::now();
+            $loan->written_off_amount = $writeOffAmount;
+            $loan->written_off_reason = $validated['reason'];
+            $loan->written_off_by_system = false;
+            $loan->written_off_by = $this->getUserId();
+            $loan->save();
+
+            // Cancel all pending schedules
+            LoanPaymentSchedules::where('loan_number', $loan->loan_number)
+                ->where('status', 1) // Active schedules
+                ->where('is_submitted', 0)
+                //->where('overdue_flag', 1)
+                ->update([
+                    'status' => 3, // Cancelled
+                    //'cancelled_reason' => 'Written off',
+                    //'cancelled_at' => Carbon::now(),
+                    //'cancelled_by' => $this->getUserId(),
+                ]);
+
+            // Log the action
+            $this->logWorkflowAction($loan, 'write_off', $validated['reason'], [
+                'amount' => $writeOffAmount,
+                'outstanding_balance' => $loan->outstanding_balance,
+            ]);
+
+            DB::commit();
+
+            // Send notification
+            /* $this->notificationService->sendLoanNotification($loan, 'write_off', [
+                'amount' => $writeOffAmount,
+                'reason' => $validated['reason'],
+            ]); */
+
+            return $this->successResponse([
+                'loan' => $loan,
+                'written_off_amount' => $writeOffAmount,
+            ], 'Loan written off successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to write off loan: ' . $e->getMessage());
+            return $this->errorResponse('Failed to write off loan: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Reverse a write off (reinstate the loan)
+     */
+    public function reverseWriteOff(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'reason' => 'required|string|min:10',
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            if ($loan->status !== Loans::STATUS_WRITTEN_OFF) {
+                return $this->errorResponse('Loan is not written off', 422);
+            }
+
+            DB::beginTransaction();
+
+            // Restore the loan to its previous status
+            $loan->status = Loans::STATUS_ACTIVE;
+            $loan->written_off_date = null;
+            $loan->written_off_amount = 0;
+            $loan->written_off_reason = null;
+            $loan->written_off_by = null;
+            $loan->save();
+
+            // Restore cancelled schedules (set back to active)
+            LoanPaymentSchedules::where('loan_id', $loan->id)
+                ->where('status', 3)
+                ->where('cancelled_reason', 'Written off')
+                ->update([
+                    'status' => 1, // Active
+                    'cancelled_reason' => null,
+                    'cancelled_at' => null,
+                    'cancelled_by' => null,
+                ]);
+
+            // Log the action
+            $this->logWorkflowAction($loan, 'reverse_write_off', $validated['reason']);
+
+            DB::commit();
+
+            return $this->successResponse($loan, 'Write off reversed successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to reverse write off: ' . $e->getMessage());
+            return $this->errorResponse('Failed to reverse write off: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Initiate foreclosure process
+     */
+    public function initiateForeclosure(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'reason' => 'required|string|min:10',
+                'notice_days' => 'sometimes|integer|min:7|max:90',
+                'redemption_period' => 'sometimes|integer|min:0|max:180',
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            // Check if loan has collateral
+            if (!$loan->collateral_id) {
+                return $this->errorResponse('Foreclosure requires collateral. This loan has no collateral.', 422);
+            }
+
+            // Check if loan can be foreclosed
+            if (!in_array($loan->status, [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_DEFAULTED])) {
+                return $this->errorResponse('Loan cannot be foreclosed in its current status', 422);
+            }
+
+            if ($loan->status === Loans::STATUS_FORECLOSURE) {
+                return $this->errorResponse('Foreclosure is already initiated for this loan', 422);
+            }
+
+            $noticeDays = $validated['notice_days'] ?? 30;
+            $redemptionPeriod = $validated['redemption_period'] ?? 30;
+
+            DB::beginTransaction();
+
+            $loan->status = Loans::STATUS_FORECLOSURE;
+            $loan->foreclosure_date = Carbon::now();
+            $loan->foreclosure_status = 'initiated';
+            $loan->foreclosure_reason = $validated['reason'];
+            $loan->foreclosure_initiated_by_system = false;
+            $loan->foreclosure_initiated_by = $this->getUserId();
+            $loan->foreclosure_notice_date = Carbon::now()->addDays($noticeDays);
+            $loan->foreclosure_redemption_date = Carbon::now()->addDays($noticeDays + $redemptionPeriod);
+            $loan->save();
+
+            // Log the action
+            $this->logWorkflowAction($loan, 'foreclosure_initiated', $validated['reason'], [
+                'notice_days' => $noticeDays,
+                'redemption_period' => $redemptionPeriod,
+                'notice_date' => $loan->foreclosure_notice_date,
+                'redemption_date' => $loan->foreclosure_redemption_date,
+            ]);
+
+            DB::commit();
+
+            // Send notification
+            /* $this->notificationService->sendLoanNotification($loan, 'foreclosure', [
+                'notice_days' => $noticeDays,
+                'redemption_period' => $redemptionPeriod,
+                'notice_date' => $loan->foreclosure_notice_date,
+                'redemption_date' => $loan->foreclosure_redemption_date,
+            ]); */
+
+            return $this->successResponse([
+                'loan' => $loan,
+                'notice_date' => $loan->foreclosure_notice_date,
+                'redemption_date' => $loan->foreclosure_redemption_date,
+            ], 'Foreclosure initiated successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to initiate foreclosure: ' . $e->getMessage());
+            return $this->errorResponse('Failed to initiate foreclosure: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Update foreclosure status
+     */
+    public function updateForeclosureStatus(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'status' => 'required|string|in:initiated,in_progress,legal_action,auction_scheduled',
+                'notes' => 'nullable|string',
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            if ($loan->status !== Loans::STATUS_FORECLOSURE) {
+                return $this->errorResponse('Loan is not in foreclosure', 422);
+            }
+
+            DB::beginTransaction();
+
+            $oldStatus = $loan->foreclosure_status;
+            $loan->foreclosure_status = $validated['status'];
+            $loan->save();
+
+            // Log the status change
+            $this->logWorkflowAction($loan, 'foreclosure_status_update', "Status changed from {$oldStatus} to {$validated['status']}", [
+                'old_status' => $oldStatus,
+                'new_status' => $validated['status'],
+                'notes' => $validated['notes'] ?? null,
+            ]);
+
+            DB::commit();
+
+            return $this->successResponse($loan, 'Foreclosure status updated successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to update foreclosure status: ' . $e->getMessage());
+            return $this->errorResponse('Failed to update foreclosure status: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Complete foreclosure (asset sold)
+     */
+    public function completeForeclosure(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'sale_amount' => 'required|numeric|min:0',
+                'buyer_name' => 'nullable|string|max:255',
+                'sale_date' => 'required|date',
+                'notes' => 'nullable|string',
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            if ($loan->status !== Loans::STATUS_FORECLOSURE) {
+                return $this->errorResponse('Loan is not in foreclosure', 422);
+            }
+
+            DB::beginTransaction();
+
+            $remainingBalance = $loan->outstanding_balance;
+            $saleAmount = $validated['sale_amount'];
+            $deficiency = max(0, $remainingBalance - $saleAmount);
+            $surplus = max(0, $saleAmount - $remainingBalance);
+
+            $loan->foreclosure_status = 'completed';
+            $loan->foreclosure_completed_at = Carbon::now();
+            $loan->foreclosure_sale_amount = $saleAmount;
+            $loan->foreclosure_sale_date = $validated['sale_date'];
+            $loan->foreclosure_buyer_name = $validated['buyer_name'] ?? null;
+
+            if ($deficiency > 0) {
+                $loan->status = Loans::STATUS_DEFAULTED;
+                $loan->deficiency_balance = $deficiency;
+            } else {
+                $loan->status = Loans::STATUS_COMPLETED;
+                $loan->loan_paid = $loan->total_loan;
+                $loan->closed_date = Carbon::now();
+            }
+
+            $loan->save();
+
+            // Log the completion
+            $this->logWorkflowAction($loan, 'foreclosure_completed', 'Foreclosure process completed', [
+                'sale_amount' => $saleAmount,
+                'remaining_balance' => $remainingBalance,
+                'deficiency' => $deficiency,
+                'surplus' => $surplus,
+                'buyer_name' => $validated['buyer_name'] ?? null,
+                'sale_date' => $validated['sale_date'],
+                'notes' => $validated['notes'] ?? null,
+            ]);
+
+            DB::commit();
+
+            return $this->successResponse([
+                'loan' => $loan,
+                'sale_amount' => $saleAmount,
+                'deficiency' => $deficiency,
+                'surplus' => $surplus,
+            ], 'Foreclosure completed successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to complete foreclosure: ' . $e->getMessage());
+            return $this->errorResponse('Failed to complete foreclosure: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Cancel foreclosure
+     */
+    public function cancelForeclosure(Request $request, $loanId)
+    {
+        try {
+            $validated = $request->validate([
+                'reason' => 'required|string|min:10',
+                'restore_status' => 'sometimes|integer|in:5,12', // 5=Active, 12=Overdue
+            ]);
+
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            if ($loan->status !== Loans::STATUS_FORECLOSURE) {
+                return $this->errorResponse('Loan is not in foreclosure', 422);
+            }
+
+            $restoreStatus = $validated['restore_status'] ?? Loans::STATUS_ACTIVE;
+
+            DB::beginTransaction();
+
+            $loan->status = $restoreStatus;
+            $loan->foreclosure_status = null;
+            $loan->foreclosure_date = null;
+            $loan->foreclosure_reason = null;
+            $loan->foreclosure_notice_date = null;
+            $loan->foreclosure_redemption_date = null;
+            $loan->save();
+
+            // Log the cancellation
+            $this->logWorkflowAction($loan, 'foreclosure_cancelled', $validated['reason'], [
+                'restored_status' => $restoreStatus,
+            ]);
+
+            DB::commit();
+
+            return $this->successResponse($loan, 'Foreclosure cancelled successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to cancel foreclosure: ' . $e->getMessage());
+            return $this->errorResponse('Failed to cancel foreclosure: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Get foreclosure details
+     */
+    public function getForeclosureDetails($loanId)
+    {
+        try {
+            $loan = Loans::where('id', $loanId)
+                ->where('company', $this->getCompanyId())
+                ->with(['collateral', 'customer', 'product'])
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            $foreclosureDetails = [
+                'is_in_foreclosure' => $loan->status === Loans::STATUS_FORECLOSURE,
+                'foreclosure_status' => $loan->foreclosure_status,
+                'foreclosure_date' => $loan->foreclosure_date,
+                'foreclosure_reason' => $loan->foreclosure_reason,
+                'notice_date' => $loan->foreclosure_notice_date,
+                'redemption_date' => $loan->foreclosure_redemption_date,
+                'sale_amount' => $loan->foreclosure_sale_amount,
+                'sale_date' => $loan->foreclosure_sale_date,
+                'completed_at' => $loan->foreclosure_completed_at,
+                'days_until_notice' => $loan->foreclosure_notice_date ? Carbon::now()->diffInDays($loan->foreclosure_notice_date, false) : null,
+                'days_until_redemption' => $loan->foreclosure_redemption_date ? Carbon::now()->diffInDays($loan->foreclosure_redemption_date, false) : null,
+                'collateral' => $loan->collateral,
+            ];
+
+            return $this->successResponse($foreclosureDetails, 'Foreclosure details retrieved successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to get foreclosure details: ' . $e->getMessage());
+            return $this->errorResponse('Failed to get foreclosure details: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Log workflow action
+     */
+    private function logWorkflowAction(Loans $loan, string $action, string $reason, array $metadata = []): void
+    {
+        try {
+            DB::table('loan_workflow_logs')->insert([
+                'loan_id' => $loan->id,
+                'action' => $action,
+                'reason' => $reason,
+                'metadata' => json_encode(array_merge($metadata, [
+                    'user_id' => $this->getUserId(),
+                    'user_name' => $this->getUserName(),
+                    'loan_status' => $loan->status,
+                    'outstanding_balance' => $loan->outstanding_balance,
+                ])),
+                'created_by_system' => false,
+                'created_by' => $this->getUserId(),
+                'created_at' => Carbon::now(),
+            ]);
+        } catch (\Exception $e) {
+            Log::warning('Failed to log workflow action: ' . $e->getMessage());
+        }
+    }
+
+
+    /**
+     * Add manual schedule to an active/overdue loan
+     */
+    public function addManualSchedule(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'loan_number' => 'required|string|exists:loans,loan_number',
+                'due_date' => 'required|date',
+            ]);
+
+            $loan = Loans::where('loan_number', $validated['loan_number'])
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            // Check if loan status allows adding schedules (Active or Overdue)
+            if (!in_array($loan->status, [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])) {
+                return $this->errorResponse('Loan schedule can only be added to active or overdue loans', 422);
+            }
+
+            // Check if a schedule already exists for this due date with status 1 (active)
+            $existingSchedule = LoanPaymentSchedules::where('loan_number', $validated['loan_number'])
+                ->where('payment_due_date', $validated['due_date'])
+                ->where('status', 1)
+                ->first();
+
+            if ($existingSchedule) {
+                return $this->errorResponse('A schedule already exists for this due date. Please edit the existing schedule instead.', 422);
+            }
+
+            // Get an existing active schedule to copy amounts from
+            $templateSchedule = LoanPaymentSchedules::where('loan_number', $validated['loan_number'])
+                ->where('status', 1)
+                ->where('payment_principal_amount', '>', 0)
+                ->first();
+
+            if (!$templateSchedule) {
+                return $this->errorResponse('No active schedule found to use as template. Please ensure the loan has an existing schedule.', 422);
+            }
+
+            // Calculate overdue flag based on due date vs loan end date
+            $dueDate = Carbon::parse($validated['due_date']);
+            $endDate = $loan->end_date ? Carbon::parse($loan->end_date) : null;
+            $overdueFlag = $endDate && $dueDate->gt($endDate) ? 1 : 0;
+
+            DB::beginTransaction();
+
+            // Get branch and zone from loan
+
+            $zone = $loan->zone;
+            $zoneData = Zone::where('id', $zone)->first();
+            $branch = $zoneData->branch;
+
+            // Create new schedule by copying template amounts
+            $schedule = LoanPaymentSchedules::create([
+                'loan_number' => $validated['loan_number'],
+                'payment_principal_amount' => $templateSchedule->payment_principal_amount,
+                'payment_interest_amount' => $templateSchedule->payment_interest_amount,
+                'payment_total_amount' => $templateSchedule->payment_total_amount,
+                'payment_due_date' => $validated['due_date'],
+                'status' => 1, // Active
+                'company' => $loan->company,
+                'branch' => $branch,
+                'zone' => $zone,
+                'is_penalty' => 0,
+                'penalty_amount' => 0,
+                'is_submitted' => 0,
+                'overdue_flag' => $overdueFlag,
+            ]);
+
+            DB::commit();
+
+            return $this->successResponse([
+                'schedule' => $schedule,
+            ], 'Manual schedule added successfully');
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to add manual schedule: ' . $e->getMessage());
+            return $this->errorResponse('Failed to add manual schedule: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Get template schedule amounts for a loan
+     */
+    public function getScheduleTemplate($loanNumber)
+    {
+        try {
+            $loan = Loans::where('loan_number', $loanNumber)
+                ->where('company', $this->getCompanyId())
+                ->first();
+
+            if (!$loan) {
+                return $this->errorResponse('Loan not found', 404);
+            }
+
+            $templateSchedule = LoanPaymentSchedules::where('loan_number', $loanNumber)
+                ->where('status', 1)
+                ->where('payment_principal_amount', '>', 0)
+                ->first();
+
+            if (!$templateSchedule) {
+                return $this->errorResponse('No active schedule found to use as template.', 404);
+            }
+
+            return $this->successResponse([
+                'principal_amount' => $templateSchedule->payment_principal_amount,
+                'interest_amount' => $templateSchedule->payment_interest_amount,
+                'total_amount' => $templateSchedule->payment_total_amount,
+            ], 'Template retrieved successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to get schedule template: ' . $e->getMessage());
+            return $this->errorResponse('Failed to get schedule template: ' . $e->getMessage(), 500);
+        }
     }
 }

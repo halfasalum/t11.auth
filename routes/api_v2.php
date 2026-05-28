@@ -169,6 +169,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/payments/previous-approvals', [LoanPaymentsController::class, 'getPreviousApprovalsData']);
         Route::get('/payments/unfilled', [LoanPaymentsController::class, 'getUnfilledPaymentsData']);
         Route::get('/payments/rejected', [LoanPaymentsController::class, 'getRejectedPaymentsData']);
+        Route::post('/schedule/manual', [LoanController::class, 'addManualSchedule']);
+        Route::get('/schedule/template/{loanNumber}', [LoanController::class, 'getScheduleTemplate']);
         Route::get('/payments/view-zone/{zone}/{date}', [LoanPaymentsController::class, 'zonePaymentsView']);
         Route::get('/payments/view/{branch}/{date}', [LoanPaymentsController::class, 'branchPaymentsView']);
         Route::get('/payments/unfilled/{zone}/{date}', [LoanPaymentsController::class, 'fetchUnfilledPayments']);
@@ -192,10 +194,6 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
 
-        // View endpoints (keep existing)
-
-
-
 
         Route::get('/{loan}', [LoanController::class, 'show'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/{loan}/schedule', [LoanController::class, 'schedule'])->middleware(ControlAccessMiddleware::class . ':8');
@@ -215,12 +213,19 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::get('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
 
+        Route::post('/{loanId}/write-off', [LoanController::class, 'writeOff']);
+        Route::post('/{loanId}/reverse-write-off', [LoanController::class, 'reverseWriteOff']);
 
+        // Foreclosure routes
+        Route::get('/{loanId}/foreclosure', [LoanController::class, 'initiateForeclosure']);
+        Route::get('/{loanId}/foreclosure/update-status', [LoanController::class, 'updateForeclosureStatus']);
+        Route::get('/{loanId}/foreclosure/complete', [LoanController::class, 'completeForeclosure']);
+        Route::get('/{loanId}/foreclosure/cancel', [LoanController::class, 'cancelForeclosure']);
 
 
 
         // Schedule management
-        Route::get('/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
+        //Route::get('/{loanId}/schedule', [LoanPaymentsController::class, 'loanSchedules']);
         Route::get('/deleteSchedule/{scheduleId}', [LoanController::class, 'deleteSchedule']);
 
         // Accounts
@@ -357,9 +362,25 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
 
-    Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
+    /* Route::get("/bank", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
     Route::get("/bank/active-accounts", [BankController::class, "listActiveAccounts"])->middleware([ControlAccessMiddleware::class . ':9']);
     Route::post("/bank/register", [BankController::class, "registerAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
     Route::get("/bank/parent-accounts", [BankController::class, "getParentAccounts"])->middleware([ControlAccessMiddleware::class . ':37']);
-    Route::put('/bank/accounts/{id}', [BankController::class, 'updateAccount'])->middleware([ControlAccessMiddleware::class . ':37']);
+    Route::put('/bank/accounts/{id}', [BankController::class, 'updateAccount'])->middleware([ControlAccessMiddleware::class . ':37']); */
+
+
+
+    Route::prefix("bank")->group(function () {
+        Route::get("/", [BankController::class, "list"])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::get("/active-accounts", [BankController::class, "listActiveAccounts"])->middleware([ControlAccessMiddleware::class . ':9']);
+        Route::post("/register", [BankController::class, "registerAccount"])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::get("/parent-accounts", [BankController::class, "getParentAccounts"])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::put('/accounts/{id}', [BankController::class, 'updateAccount'])->middleware([ControlAccessMiddleware::class . ':37']);
+
+        // New routes
+        Route::post('/deposit', [BankController::class, 'deposit'])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::post('/transfer', [BankController::class, 'transfer'])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::get('/accounts/{id}/transactions', [BankController::class, 'getTransactionHistory'])->middleware([ControlAccessMiddleware::class . ':37']);
+        Route::get('/accounts/{id}', [BankController::class, 'getAccount'])->middleware([ControlAccessMiddleware::class . ':37']);
+    });
 });
