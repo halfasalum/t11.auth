@@ -593,9 +593,10 @@ class WhatsAppController extends Controller
         $message .= "Jina la kampuni: \n";
         $message .= "Baruapepe: \n";
         $message .= "Namba ya simu: \n";
-        $message .= "Mkoa kampuni ilipo: \n";
+        $message .= "Mkoa: \n";
         $message .= "Jina la mmiliki: \n\n";
-        $message .= "Nakili na ujaze kisha unitumie.";
+        $message .= "Nakili na ujaze kisha unitumie.\n\n";
+        $message .= "Mfano: \nJina la kampuni: ABC MICROFINANCE\nBaruapepe: abc@gmail.com\nNamba ya simu: 0799713285\nMkoa: Dar es Salaam\nJina la mmiliki: Halfa Mnyimvua\n\n";
 
         $this->sendMessage($to, $message);
     }
