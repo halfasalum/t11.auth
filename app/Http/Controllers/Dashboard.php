@@ -465,6 +465,7 @@ class Dashboard extends BaseController
 
         if (!empty($zoneIds)) {
             $loans = Loans::whereIn('zone', $zoneIds)
+                ->where('status', '!=', 9)
                 ->where('company', $companyId)
                 ->get();
 
@@ -703,6 +704,7 @@ class Dashboard extends BaseController
     private function getPendingLoans($zoneIds, $companyId)
     {
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->where('status', Loans::STATUS_SUBMITTED);
 
         if (!empty($zoneIds)) {
@@ -839,6 +841,7 @@ class Dashboard extends BaseController
     private function getTopCustomersByLoan($zoneIds, $companyId, $limit = 5)
     {
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
 
         if (!empty($zoneIds)) {
@@ -869,6 +872,7 @@ class Dashboard extends BaseController
     {
         // Get officer's loans
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('zone', $zoneIds)
             ->where('registered_by', $userId)
             ->get();
@@ -938,6 +942,7 @@ class Dashboard extends BaseController
     private function getBranchLoans($branchIds, $zoneIds, $companyId)
     {
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->when(!empty($zoneIds), function ($q) use ($zoneIds) {
                 $q->whereIn('zone', $zoneIds);
             })
@@ -1001,6 +1006,7 @@ class Dashboard extends BaseController
 
             // Get loans for this officer
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->whereIn('zone', $officerZones)
                 ->where('registered_by', $officer->id)
                 ->get();
@@ -1055,6 +1061,7 @@ class Dashboard extends BaseController
 
         foreach ($zones as $zone) {
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->where('zone', $zone->id)
                 ->get();
 
@@ -1112,6 +1119,7 @@ class Dashboard extends BaseController
     {
         // Pending loan applications
         $pendingLoans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->where('status', Loans::STATUS_SUBMITTED)
             ->when(!empty($zoneIds), function ($q) use ($zoneIds) {
                 $q->whereIn('zone', $zoneIds);
@@ -1139,6 +1147,7 @@ class Dashboard extends BaseController
     private function getPortfolioAtRisk($branchIds, $zoneIds, $companyId)
     {
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
             ->when(!empty($zoneIds), function ($q) use ($zoneIds) {
                 $q->whereIn('zone', $zoneIds);
@@ -1198,6 +1207,7 @@ class Dashboard extends BaseController
             $zoneIds = Zone::where('branch', $branch->id)->pluck('id')->toArray();
 
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->whereIn('zone', $zoneIds)
                 ->get();
 
@@ -1233,6 +1243,7 @@ class Dashboard extends BaseController
         $performance = [];
         foreach ($products as $product) {
             $loans = Loans::where('product', $product->id)
+                ->where('status', '!=', 9)
                 ->where('company', $companyId)
                 ->when(!empty($zoneIds), function ($q) use ($zoneIds) {
                     $q->whereIn('zone', $zoneIds);
@@ -1284,7 +1295,9 @@ class Dashboard extends BaseController
      */
     private function getCompanyLoans($companyId)
     {
-        $loans = Loans::where('company', $companyId)->get();
+        $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
+            ->get();
 
         $total = $loans->count();
         $active = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
@@ -1312,6 +1325,7 @@ class Dashboard extends BaseController
     private function getFinancialKPI($companyId)
     {
         $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
             ->get();
 
@@ -1370,7 +1384,9 @@ class Dashboard extends BaseController
      */
     private function getOperationalKPI($companyId)
     {
-        $loans = Loans::where('company', $companyId)->get();
+        $loans = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
+            ->get();
 
         $totalApplications = $loans->count();
         $approved = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED])->count();
@@ -1463,6 +1479,7 @@ class Dashboard extends BaseController
             $zoneIds = Zone::where('branch', $branch->id)->pluck('id')->toArray();
 
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->whereIn('zone', $zoneIds)
                 ->get();
 
@@ -1532,7 +1549,9 @@ class Dashboard extends BaseController
         $performance = [];
         foreach ($products as $product) {
             $loans = Loans::where('product', $product->id)
+                ->where('status', '!=', 9)
                 ->where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->get();
 
             $totalLoans = $loans->count();
@@ -1580,6 +1599,7 @@ class Dashboard extends BaseController
             $monthEnd = Carbon::now()->subMonths($i)->endOfMonth();
 
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
                 ->where(function ($q) use ($monthStart, $monthEnd) {
                     $q->whereBetween('start_date', [$monthStart, $monthEnd])
@@ -1684,6 +1704,7 @@ class Dashboard extends BaseController
 
         // High risk customers (with overdue loans)
         $highRiskCustomers = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->where('status', Loans::STATUS_OVERDUE)
             ->distinct('customer')
             ->count();
@@ -1693,6 +1714,7 @@ class Dashboard extends BaseController
         $delinquencyByProduct = [];
         foreach ($products as $product) {
             $loans = Loans::where('product', $product->id)
+                ->where('status', '!=', 9)
                 ->where('company', $companyId)
                 ->get();
 
@@ -1710,6 +1732,7 @@ class Dashboard extends BaseController
 
         // Top 10 customers by exposure (largest outstanding balances)
         $topExposure = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
             ->with(['loan_customer'])
             ->get()
@@ -1753,6 +1776,7 @@ class Dashboard extends BaseController
     private function getTopCompanyCustomers($companyId, $limit = 10)
     {
         return Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED])
             ->with(['loan_customer'])
             ->get()
@@ -1794,6 +1818,7 @@ class Dashboard extends BaseController
 
         // Pending loan applications
         $pendingLoanApplications = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->where('status', Loans::STATUS_SUBMITTED)
             ->count();
 
@@ -1828,6 +1853,7 @@ class Dashboard extends BaseController
 
         // Cash outflows (disbursements)
         $disbursements = Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
             ->whereBetween('start_date', [$startDate, $endDate])
             ->sum('principal_amount');
 
@@ -1862,7 +1888,9 @@ class Dashboard extends BaseController
         foreach ($users as $user) {
             // Loans registered by this user
             $loans = Loans::where('company', $companyId)
+                ->where('status', '!=', 9)
                 ->where('registered_by', $user->id)
+                ->where('status', '!=', 9)
                 ->get();
 
             $totalDisbursed = $loans->sum('principal_amount');
@@ -1917,7 +1945,7 @@ class Dashboard extends BaseController
         $overview = [];
 
         foreach ($companies as $company) {
-            $loans = Loans::where('company', $company->id)->get();
+            $loans = Loans::where('company', $company->id)->where('status', '!=', 9)->get();
             $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
                 return ($loan->total_loan) - $loan->loan_paid;
             });
@@ -1945,8 +1973,8 @@ class Dashboard extends BaseController
         $startDate = Carbon::now()->startOfYear();
         $endDate = Carbon::now();
 
-        $totalLoans = Loans::whereBetween('created_at', [$startDate, $endDate])->count();
-        $totalDisbursed = Loans::whereBetween('created_at', [$startDate, $endDate])->sum('principal_amount');
+        $totalLoans = Loans::whereBetween('created_at', [$startDate, $endDate])->where('status', '!=', 9)->count();
+        $totalDisbursed = Loans::whereBetween('created_at', [$startDate, $endDate])->where('status', '!=', 9)->sum('principal_amount');
         $totalCollected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
             ->whereBetween('payment_due_date', [$startDate, $endDate])
             ->where('submission_status', 11)
@@ -2136,6 +2164,7 @@ class Dashboard extends BaseController
     {
         // Get recent loan registrations
         $recentLoans = Loans::with(['loan_customer', 'loan_product'])
+            ->where('status', '!=', 9)
             ->orderBy('created_at', 'desc')
             ->take(5)
             ->get()

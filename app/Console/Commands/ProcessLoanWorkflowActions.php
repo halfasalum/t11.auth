@@ -541,19 +541,20 @@ class ProcessLoanWorkflowActions extends Command
      */
     protected function getDaysOverdue(Loans $loan): int
     {
-        $oldestUnpaidSchedule = LoanPaymentSchedules::join('payment_submissions', 'loan_payment_schedule.loan_number', 'payment_submissions.loan_number')
+        $oldestUnpaidSchedule = LoanPaymentSchedules::select('loan_payment_schedule.*')
+            ->join('payment_submissions', 'loan_payment_schedule.loan_number', 'payment_submissions.loan_number')
             ->where('loan_payment_schedule.loan_number', $loan->loan_number)
-            ->where('status', 1)
-            ->where('overdue_flag', 1)
-            ->where('payment_due_date', '<', Carbon::now())
-            ->orderBy('payment_due_date', 'asc')
+            ->where('loan_payment_schedule.status', 1)
+            ->where('loan_payment_schedule.overdue_flag', 1)
+            ->where('loan_payment_schedule.payment_due_date', '<', Carbon::now())
+            ->orderBy('loan_payment_schedule.payment_due_date', 'asc')
             ->first();
 
         if (!$oldestUnpaidSchedule) {
             return 0;
         }
 
-        return $oldestUnpaidSchedule->payment_due_date->diffInDays(Carbon::now());
+        return Carbon::parse($oldestUnpaidSchedule->payment_due_date)->diffInDays(Carbon::now());
     }
 
     /**
@@ -563,12 +564,12 @@ class ProcessLoanWorkflowActions extends Command
     {
         return LoanPaymentSchedules::join('payment_submissions', 'loan_payment_schedule.loan_number', 'payment_submissions.loan_number')
             ->where('loan_payment_schedule.loan_number', $loan->loan_number)
-            ->where('status', 1)
-            ->where('overdue_flag', 1)
-            ->where('penalty_amount', '>', 0)
-            ->where('payment_due_date', '<', Carbon::now())
+            ->where('loan_payment_schedule.status', 1)
+            ->where('loan_payment_schedule.overdue_flag', 1)
+            ->where('loan_payment_schedule.penalty_amount', '>', 0)
+            ->where('loan_payment_schedule.payment_due_date', '<', Carbon::now())
             ->where(function ($q) {
-                $q->where('amount', 0);
+                $q->where('payment_submissions.amount', 0);
             })
             ->count();
     }
@@ -588,7 +589,6 @@ class ProcessLoanWorkflowActions extends Command
         if ($totalTerm <= 0) {
             return 0;
         }
-
         return ($elapsed / $totalTerm) * 100;
     }
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V2\WhatsAppController;
 use App\Http\Controllers\Authcontroller;
 use App\Http\Controllers\Branch;
 use App\Http\Controllers\Company;
@@ -45,10 +46,17 @@ Route::post('/default-admin', [AuthController::class, 'default_admin_']);
 //Route::get('/payment/gettoken', [PaymentController::class, 'getToken']);
 //Route::get('/loans/disburse', [LoanDisbursementController::class, 'disburse']);
 
-//Route::get('/send-message', [TestController::class, 'sendMessage']);
+Route::get('/send-message', [TestController::class, 'sendMessage']);
+Route::get('/home', [WhatsAppController::class, 'home']);
+Route::post('/home', [WhatsAppController::class, 'home']);
+Route::get('/whatsapp', [WhatsAppController::class, 'verify']);
+Route::post('/whatsapp', [WhatsAppController::class, 'handle']);
+
+
 
 
 //Route::get("/user/roles/{id}", [SystemUsers::class, "getRolePermissons"]);
+
 
 
 use Illuminate\Support\Facades\Response;

@@ -9,7 +9,7 @@ class Collateral extends Model
 {
     use HasFactory;
 
-    
+
     protected $table = 'collateral';
     protected $primaryKey = 'id';
     public $timestamps = true;
@@ -19,5 +19,9 @@ class Collateral extends Model
         'company',
         'customer',
         'status',
+    ];
+
+    protected $casts = [
+        'value' => 'float',
     ];
 }

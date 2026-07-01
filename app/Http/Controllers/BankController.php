@@ -300,9 +300,15 @@ class BankController extends Controller
             $fEndDate = $user->get('f_end_date');
 
             // Calculate amount sign
-            $transactionAmount = ($type === 'credit') ? abs($amount) : -1 * abs($amount);
+            /* $transactionAmount = ($type === 'credit') ? abs($amount) : -1 * abs($amount); */
+
+            if ($type === 'credit') {
+                $transactionAmount = $amount; // Positive for credit
+            } else {
+                $transactionAmount = -$amount; // Negative for debit
+            }
             if ($isReverse) {
-                $transactionAmount = -1 * $transactionAmount;
+                $transactionAmount = -$transactionAmount;
             }
 
             DB::transaction(function () use ($accountId, $transactionAmount, $date, $isReverse, $branchId, $zoneId, $loanNumber, $customerId, $userCompany, $userId, $fStartDate, $fEndDate, $scheduleId, $description, $type) {
@@ -320,8 +326,12 @@ class BankController extends Controller
                 }
 
                 // Get opening balance
-                $lastTransaction = AccountHistory::where('account_id', $accountId)
+                /* $lastTransaction = AccountHistory::where('account_id', $accountId)
                     ->orderBy('created_at', 'desc')
+                    ->first(); */
+
+                $lastTransaction = AccountHistory::where('account_id', $accountId)
+                    ->orderBy('id', 'desc')  // More reliable than created_at
                     ->first();
 
                 $openingBalance = $lastTransaction ? $lastTransaction->closing_balance : $account->account_balance;

@@ -4,8 +4,73 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "f85ced6e3a8e677fb248902d70bec90a",
+    "content-hash": "faf91f8d6e38d567fc0d17622e71cb10",
     "packages": [
+        {
+            "name": "allanbernier/laravel-gpt",
+            "version": "v1.0.1",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/AllanBernier/laravel-gpt.git",
+                "reference": "a113270c41fe8bfeefbd23e46979fec27a69b9bb"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/AllanBernier/laravel-gpt/zipball/a113270c41fe8bfeefbd23e46979fec27a69b9bb",
+                "reference": "a113270c41fe8bfeefbd23e46979fec27a69b9bb",
+                "shasum": ""
+            },
+            "require": {
+                "illuminate/console": "^9.0|^10.0|^11.0|^12.0",
+                "illuminate/http": "^9.0|^10.0|^11.0|^12.0",
+                "illuminate/support": "^9.0|^10.0|^11.0|^12.0",
+                "php": "^8.1"
+            },
+            "require-dev": {
+                "orchestra/testbench": "^7.0|^8.0|^9.0",
+                "phpunit/phpunit": "^9.5|^10.0"
+            },
+            "type": "library",
+            "extra": {
+                "laravel": {
+                    "providers": [
+                        "AllanBernier\\LaravelGpt\\LaravelGptServiceProvider"
+                    ]
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "AllanBernier\\LaravelGpt\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Allan Bernier"
+                }
+            ],
+            "description": "A Laravel package for interacting with the ChatGPT API with built-in support for function calling (tools)",
+            "keywords": [
+                "ChatGpt",
+                "ai",
+                "assistant",
+                "chat",
+                "function-calling",
+                "gpt",
+                "laravel",
+                "llm",
+                "openai",
+                "tools"
+            ],
+            "support": {
+                "issues": "https://github.com/AllanBernier/laravel-gpt/issues",
+                "source": "https://github.com/AllanBernier/laravel-gpt/tree/v1.0.1"
+            },
+            "time": "2025-12-18T10:41:24+00:00"
+        },
         {
             "name": "bacon/bacon-qr-code",
             "version": "v3.0.1",
@@ -10130,5 +10195,5 @@
         "php": "^8.2"
     },
     "platform-dev": {},
-    "plugin-api-version": "2.6.0"
+    "plugin-api-version": "2.9.0"
 }

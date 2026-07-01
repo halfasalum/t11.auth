@@ -1,10 +1,13 @@
 <?php
 
+use App\Http\Controllers\Api\V2\AIController;
+use App\Http\Controllers\Api\V2\CompanyRegistrationController;
 use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
 use App\Http\Controllers\Api\V2\LoansProductsController;
+use App\Http\Controllers\Api\V2\NotificationController;
 use App\Http\Controllers\Api\V2\PaymentsController;
 use App\Http\Controllers\Api\V2\PlanManagementController;
 use App\Http\Controllers\Api\V2\Reports\AnalyticsReportController;
@@ -18,6 +21,7 @@ use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
 use App\Http\Controllers\Api\V2\SqlQueryController;
 use App\Http\Controllers\Api\V2\SubscriptionController;
+use App\Http\Controllers\Api\V2\WhatsAppController;
 use App\Http\Controllers\Authcontroller;
 use App\Http\Controllers\BankController;
 use App\Http\Controllers\Branch;
@@ -30,22 +34,51 @@ use App\Http\Controllers\Roles;
 use App\Http\Controllers\SystemUsers;
 use App\Http\Controllers\ZoneController;
 use Illuminate\Support\Facades\Route;
-
 use App\Http\Middleware\CheckSubscriptionLimits;
 use App\Http\Middleware\CheckSubscriptionStatus;
 use App\Http\Middleware\ControlAccessMiddleware;
 use App\Http\Middleware\JwtMiddleware;
 
-
+// Incoming messages
 Route::post('/authenticate', [Authcontroller::class, 'login']);
 Route::post('/refresh', [AuthController::class, 'refresh']);
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('jwt.auth');
 Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('jwt.auth');
+Route::get('/registration/plans', [SubscriptionController::class, 'getPlans']);
+
+
+
+Route::prefix('register')->group(function () {
+    Route::post('/company-admin', [CompanyRegistrationController::class, 'registerCompanyAdmin']);
+    Route::post('/select-plan', [CompanyRegistrationController::class, 'selectPlan']);
+    Route::get('/status/{token}', [CompanyRegistrationController::class, 'getRegistrationStatus']);
+    Route::get('/check-company-name', [CompanyRegistrationController::class, 'checkCompanyName']);
+    Route::get('/check-company-email', [CompanyRegistrationController::class, 'checkCompanyEmail']);
+    Route::get('/check-admin-email', [CompanyRegistrationController::class, 'checkAdminEmail']);
+
+    Route::post('/', [CompanyRegistrationController::class, 'register']);
+    Route::get('/check-company-name', [CompanyRegistrationController::class, 'checkCompanyName']);
+    Route::get('/check-company-email', [CompanyRegistrationController::class, 'checkCompanyEmail']);
+    Route::get('/check-admin-email', [CompanyRegistrationController::class, 'checkAdminEmail']);
+});
+
 
 // ============================================
 // Protected Routes (require authentication)
 // ============================================
 
+Route::middleware([JwtMiddleware::class])->group(function () {
+
+    Route::prefix('subscription')->group(function () {
+
+        // Client routes
+        Route::get('/plans', [SubscriptionController::class, 'getPlans']);
+        Route::get('/current', [SubscriptionController::class, 'getCurrentSubscription']);
+        Route::post('/order', [SubscriptionController::class, 'submitOrder']);
+        Route::get('/orders', [SubscriptionController::class, 'getOrderHistory']);
+        Route::get('/orders/{id}', [SubscriptionController::class, 'getOrder']);
+    });
+});
 Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group(function () {
 
     // routes/api.php
@@ -212,10 +245,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/{loan}/disburse', [LoanController::class, 'disburse'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::get('/{loan}/complete', [LoanController::class, 'complete'])->middleware(ControlAccessMiddleware::class . ':21');
         Route::get('/{loan}/default', [LoanController::class, 'markDefault'])->middleware(ControlAccessMiddleware::class . ':21');
-
         Route::post('/{loanId}/write-off', [LoanController::class, 'writeOff']);
         Route::post('/{loanId}/reverse-write-off', [LoanController::class, 'reverseWriteOff']);
-
         // Foreclosure routes
         Route::get('/{loanId}/foreclosure', [LoanController::class, 'initiateForeclosure']);
         Route::get('/{loanId}/foreclosure/update-status', [LoanController::class, 'updateForeclosureStatus']);
@@ -245,7 +276,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
 
     // Support Ticket Routes
-    Route::prefix('tickets')->middleware(['subscription.feature:has_support_tickets'])->group(function () {
+    Route::prefix('tickets')->group(function () {
         Route::get('/', [SupportTicketController::class, 'index']);
         Route::get('/stats', [SupportTicketController::class, 'getStats']);
         Route::post('/', [SupportTicketController::class, 'store']);
@@ -258,14 +289,6 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     });
 
     Route::prefix('subscription')->group(function () {
-
-        // Client routes
-        Route::get('/plans', [SubscriptionController::class, 'getPlans']);
-        Route::get('/current', [SubscriptionController::class, 'getCurrentSubscription']);
-        Route::post('/order', [SubscriptionController::class, 'submitOrder']);
-        Route::get('/orders', [SubscriptionController::class, 'getOrderHistory']);
-        Route::get('/orders/{id}', [SubscriptionController::class, 'getOrder']);
-
         // Admin routes
         Route::prefix('admin')->group(function () {
             Route::get('/pending-orders', [SubscriptionController::class, 'getPendingOrders']);
@@ -273,10 +296,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
             Route::get('/stats', [SubscriptionController::class, 'getAdminStats']);
             // Get all company subscriptions
             Route::get('/subscriptions', [SubscriptionController::class, 'getCompanySubscriptions']);
-
             // Renew a subscription
             Route::post('/subscriptions/{id}/renew', [SubscriptionController::class, 'renewSubscription']);
-
             // Cancel a subscription
             Route::post('/subscriptions/{id}/cancel', [SubscriptionController::class, 'cancelSubscription']);
             Route::post('/orders/{id}/verify', [SubscriptionController::class, 'verifyOrder']);
@@ -309,14 +330,11 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
     /* OLD API MIGRATION */
 
-
     Route::get("/income", [IncomeController::class, "list"])->middleware([ControlAccessMiddleware::class . ':36']);
     Route::get("/income/active-loans", [LoanController::class, "activeLoansByLoanNumber"])->middleware([ControlAccessMiddleware::class . ':36']);
     Route::get("/income/categories", [IncomeController::class, "categoryList"])->middleware([ControlAccessMiddleware::class . ':36']);
     Route::post("/income/category/register", [IncomeController::class, "registeriCategory"])->middleware([ControlAccessMiddleware::class . ':37']);
     Route::post("/income/register", [IncomeController::class, "registerIncome"])->middleware([ControlAccessMiddleware::class . ':37']);
-
-
     Route::post("/module/register", [Modules::class, "register"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/company/register", [Company::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
     Route::get("/companies", [Company::class, "list"])->middleware([ControlAccessMiddleware::class . ':2']);
@@ -347,7 +365,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::post("/branch/update", [Branch::class, "update"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::post("/branch/fund", [Branch::class, "fund"])->middleware([ControlAccessMiddleware::class . ':29']);
     Route::get("/zones", [ZoneController::class, "list"])->middleware([ControlAccessMiddleware::class . ':30']);
-    Route::get("/user/zones", [ZoneController::class, "getUserAssignedZones"])->middleware([ControlAccessMiddleware::class . ':12']);
+    Route::get("/user/zones", [ZoneController::class, "getUserAssignedZones"])->middleware([ControlAccessMiddleware::class . ':7']);
     Route::post("/zone/register", [ZoneController::class, "register"])->middleware([ControlAccessMiddleware::class . ':30'])->middleware([CheckSubscriptionLimits::class . ':zones']);
     Route::get('/dashboard/officer', [Dashboard::class, 'officer_dashboard'])->middleware([ControlAccessMiddleware::class . ':19']);
     Route::get('/dashboard/branch', [Dashboard::class, 'branch_dashboard'])->middleware([ControlAccessMiddleware::class . ':20']);
@@ -382,5 +400,23 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('/transfer', [BankController::class, 'transfer'])->middleware([ControlAccessMiddleware::class . ':37']);
         Route::get('/accounts/{id}/transactions', [BankController::class, 'getTransactionHistory'])->middleware([ControlAccessMiddleware::class . ':37']);
         Route::get('/accounts/{id}', [BankController::class, 'getAccount'])->middleware([ControlAccessMiddleware::class . ':37']);
+    });
+
+
+    Route::get('/notifications', [NotificationController::class, 'index']);
+    Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+    Route::get('/notifications/{id}', [NotificationController::class, 'show']);
+    Route::put('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
+    Route::put('/notifications/mark-all-read', [NotificationController::class, 'markAllAsRead']);
+    Route::delete('/notifications/{id}', [NotificationController::class, 'destroy']);
+    Route::delete('/notifications', [NotificationController::class, 'destroyAll']);
+
+    // AI Assistant Routes (JWT protected)
+    Route::prefix('ai')->group(function () {
+        Route::post('/chat', [AIController::class, 'chat']);
+        Route::post('/chat-stream', [AIController::class, 'chatStream']);
+        Route::get('/loan-analysis/{loanId}', [AIController::class, 'getLoanAnalysis']);
+        Route::get('/history', [AIController::class, 'getConversationHistory']);
+        Route::post('/clear-history', [AIController::class, 'clearHistory']);
     });
 });

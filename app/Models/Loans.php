@@ -53,6 +53,7 @@ class Loans extends Model
         'loan_file',
         'loan_score',
         'is_defaulted',
+        'write_off_reason',
         
         // Write Off fields
         'written_off_date',

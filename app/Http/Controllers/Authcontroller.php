@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\BranchUser;
 use App\Models\Company;
+use App\Models\Subscription;
 use App\Models\role_permissions;
 use App\Models\User;
 use App\Models\users_roles;
@@ -106,6 +107,25 @@ class Authcontroller extends Controller
                 $company = Company::where('id', $user->user_company)->first();
                 $financial = $this->generateFinancialYearDate($company->financial_year_start);
 
+                // Get latest subscription
+                $subscription = Subscription::where('company_id', $company->id)
+                    ->with('plan:id,name')
+                    ->latest()
+                    ->first();
+
+
+                $subscriptionData = $subscription ? [
+                    'status'         => $subscription->status,
+                    'plan'           => $subscription->plan->name ?? null,
+                    'end_date'       => $subscription->end_date?->toDateString(),
+                    'days_remaining' => $subscription->days_remaining,
+                ] : [
+                    'status'         => 'expired',
+                    'plan'           => null,
+                    'end_date'       => null,
+                    'days_remaining' => 0,
+                ];
+
                 // Generate JWT token
                 $token = JWTAuth::claims([
                     'controls' => $controls,
@@ -119,18 +139,17 @@ class Authcontroller extends Controller
                     "company_name" => $company->company_name,
                     "f_start_date" => $financial['start_date'],
                     "f_end_date" => $financial['end_date'],
-                    'name'  => $user->first_name . " - " . $user->last_name,
+                    'name'  => $user->first_name . " " . $user->last_name,
                 ])->fromUser($user);
                 $user->last_login_at = now();
                 $user->save();
 
                 $userLogService->log('login', null, $user->id, $user->user_company);
 
-
                 return response()->json([
                     'token' => $token,
                     'refresh_token' => $refreshToken,
-                    'name' => $user->first_name . " - " . $user->last_name,
+                    'name' => $user->first_name . " " . $user->last_name,
                     'company' => $company->company_name,
                     'success' => true,
                     'permissions' => $controls,
@@ -141,6 +160,7 @@ class Authcontroller extends Controller
                     'message' => 'Login successful',
                     'needs_password_change' => $needsPasswordChange,
                     'expires_in' => config('jwt.ttl') * 60,
+                    'subscription' => $subscriptionData,
                 ]);
             } else {
                 return response()->json([

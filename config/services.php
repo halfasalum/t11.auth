@@ -54,5 +54,11 @@ return [
         'secret_key' => env('BEEM_SECRET_KEY', 'NTAzMTYyMDIwZWU0ZDgxMDQ5NDcyNjRjOTk0OTg3ZTRlNTIyNDA1NzZhYTU3MjFmMjcxNzAyNzY0OGUwY2E2ZQ=='),
         'source_addr' => env('BEEM_SOURCE_ADDR', 'CMS'),
     ],
+    'whatsapp' => [
+        'token'           => env('WHATSAPP_TOKEN'),
+        'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
+        'verify_token'    => env('WHATSAPP_VERIFY_TOKEN'),
+        'admin_phone'     => env('WHATSAPP_ADMIN_PHONE'),
+    ],
 
 ];

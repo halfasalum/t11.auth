@@ -17,7 +17,7 @@ Schedule::command('loans:process-workflow')
     ->runInBackground();
 
 // Daily backup at 1 AM
-Schedule::command('backup:database-email --compress --email=zemburetheson@gmail.com')
+Schedule::command('backup:database-email --compress')
     ->dailyAt('00:45')
     ->appendOutputTo(storage_path('logs/dbbackup.log'))
     ->runInBackground();

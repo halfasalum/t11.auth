@@ -318,12 +318,11 @@ class LoanPaymentsController extends BaseController
                 return [
                     'zone' => $item->zone,
                     'zone_name' => $zoneNames[$item->zone] ?? 'Unknown',
-                    'payment_date' => $item->payment_due_date,
+                    'payment_date' => date('Y-m-d', strtotime($item->payment_due_date)),
                     'total_target' => (float) $item->total_target,
                     'total_paid' => 0,
                 ];
             })->values();
-
             return $this->successResponse($formattedData, 'Unfilled payments retrieved successfully');
         } catch (\Exception $e) {
             Log::error('Failed to load unfilled payments: ' . $e->getMessage());
@@ -381,7 +380,7 @@ class LoanPaymentsController extends BaseController
                 return [
                     'zone' => $item->zone,
                     'zone_name' => $zoneNames[$item->zone] ?? 'Unknown',
-                    'payment_date' => $item->payment_due_date,
+                    'payment_date' =>date('Y-m-d', strtotime($item->payment_due_date)),
                     'total_target' => (float) $item->total_target,
                     'total_paid' => (float) $item->total_paid,
                 ];
@@ -694,7 +693,7 @@ class LoanPaymentsController extends BaseController
                         $bank->registerTransaction(
                             $payment['paid_account'],
                             $payment['amount'],
-                            true,
+                            'credit',
                             $schedule->payment_due_date,
                             false,
                             $payment['branch'],
@@ -720,11 +719,7 @@ class LoanPaymentsController extends BaseController
             // Update loan balances
             $this->updateLoanBalances($validated['branch'], $validated['payment_date']);
 
-
-
             DB::commit();
-
-
 
             return $this->successResponse(
                 ['updated_count' => $updated],

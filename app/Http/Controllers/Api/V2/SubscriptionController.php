@@ -25,7 +25,20 @@ class SubscriptionController extends BaseController
      */
     public function getPlans()
     {
-        $plans = Plan::with('discounts')->orderBy('price', 'asc')->get();
+
+        $companyId = $this->getCompanyId();
+
+
+        $query = Plan::with('discounts')->orderBy('price', 'asc');
+        if ($this->hasUseTrial()) {
+            $query->where('id', '!=', 5);
+        }
+
+        if ($this->hasOtherSubscription()) {
+            $query->where('id', '!=', 5);
+        }
+
+        $plans = $query->get();
 
         // Transform plans to include all necessary data
         $plansData = $plans->map(function ($plan) {
@@ -172,7 +185,7 @@ class SubscriptionController extends BaseController
         // Calculate total amount with discount
         $monthlyPrice = floatval($plan->price);
         $subtotal = $monthlyPrice * $durationMonths;
-        $discount = $this->calculateDiscount($durationMonths, $subtotal);
+        $discount = $this->calculateDiscount($plan, $durationMonths);
         $totalAmount = $subtotal - $discount;
 
         DB::beginTransaction();
@@ -434,6 +447,8 @@ class SubscriptionController extends BaseController
             }
             $order->save();
 
+            
+
             // Update or create subscription
             $subscription = Subscription::updateOrCreate(
                 ['company_id' => $order->company_id, 'subscription_order_id' => $order->id],
@@ -447,6 +462,7 @@ class SubscriptionController extends BaseController
                         'branch_limit' => $order->plan->branch_limit,
                         'zone_limit' => $order->plan->zone_limit,
                         'user_limit' => $order->plan->user_limit,
+                        'loan_limit' => $order->plan->loan_limit,
                     ]
                 ]
             );

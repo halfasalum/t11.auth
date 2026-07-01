@@ -17,6 +17,11 @@ class JwtMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // Allow WhatsApp webhook without authentication
+        if ($request->is('whatsapp')) {
+            return $next($request);
+        }
+
         $newToken = null;
         
         try {

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V2\WhatsAppController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
@@ -23,6 +24,17 @@ Route::middleware([
         return Inertia::render('Dashboard');
     })->name('dashboard');
 }); */
+
+
+Route::withoutMiddleware([
+    \App\Http\Middleware\JwtMiddleware::class,
+    \App\Http\Middleware\ControlAccessMiddleware::class,
+    \App\Http\Middleware\CheckSubscriptionLimits::class,
+    \App\Http\Middleware\CheckSubscriptionStatus::class,
+])->group(function () {
+    Route::get('/whatsapp', [WhatsAppController::class, 'verify']);   // Webhook verification
+    Route::post('/whatsapp', [WhatsAppController::class, 'handle']);  // Webhook messages
+});
 
 Route::get('/system/optimize/{key}', function ($key) {
 

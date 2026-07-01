@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class PaymentSubmissions extends Model
 {
     use HasFactory;
-    
+
     protected $table = 'payment_submissions';
     protected $primaryKey = 'id';
     public $timestamps = true;
@@ -34,9 +34,9 @@ class PaymentSubmissions extends Model
 
     protected $casts = [
         'schedule_id' => 'integer',
-        'amount'=> 'decimal:2',
-        'paid_principal'=> 'decimal:2',
-        'paid_interest'=> 'decimal:2',
+        'amount' => 'double',
+        'paid_principal' => 'double',
+        'paid_interest' => 'double',
         // ... other casts
     ];
 

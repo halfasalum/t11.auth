@@ -11,6 +11,7 @@ use Laravel\Jetstream\HasProfilePhoto;
 use Laravel\Sanctum\HasApiTokens;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 
+
 class User extends Authenticatable implements JWTSubject
 {
     use HasApiTokens;
@@ -101,5 +102,29 @@ class User extends Authenticatable implements JWTSubject
     public function user_branches()
     {
         return $this->belongsToMany(BranchUser::class, 'user_id', 'branch_id');
+    }
+
+     /**
+     * Get notifications for this user
+     */
+    public function notifications()
+    {
+        return $this->hasMany(Notification::class)->orderBy('created_at', 'desc');
+    }
+    
+    /**
+     * Get unread notifications count
+     */
+    public function unreadNotificationsCount(): int
+    {
+        return $this->notifications()->unread()->count();
+    }
+    
+    /**
+     * Get unread notifications
+     */
+    public function unreadNotifications()
+    {
+        return $this->notifications()->unread()->get();
     }
 }

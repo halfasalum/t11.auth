@@ -79,7 +79,8 @@ class LoanController extends BaseController
             'loan_customer',
             'loan_zone',
             'loan_product'
-        ])->where('company', $companyId);
+        ])->where('company', $companyId)
+            ->where('status', '!=', 9);
 
         if (!$isManager) {
             if (!empty($userZones)) {
@@ -137,7 +138,8 @@ class LoanController extends BaseController
         $userBranches = $this->getUserBranches();
         $isManager = $this->hasPermission(21);
 
-        $query = Loans::where('company', $companyId);
+        $query = Loans::where('company', $companyId)
+            ->where('status', '!=', 9);
 
         if (!$isManager) {
             if (!empty($userZones)) {
@@ -163,7 +165,7 @@ class LoanController extends BaseController
             'completed'       => (clone $query)->where('status', Loans::STATUS_COMPLETED)->count(),
             'overdue'         => (clone $query)->where('status', Loans::STATUS_OVERDUE)->count(),
             'defaulted'       => (clone $query)->where('status', Loans::STATUS_DEFAULTED)->count(),
-            'total_disbursed' => (clone $query)->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_COMPLETED, Loans::STATUS_OVERDUE])->sum('principal_amount'),
+            'total_disbursed' => (float)(clone $query)->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_COMPLETED, Loans::STATUS_OVERDUE])->sum('principal_amount'),
             'total_repaid'    => (clone $query)->where('status', Loans::STATUS_COMPLETED)->sum('loan_paid'),
             'outstanding'     => (clone $query)->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
                 ->get()
@@ -236,23 +238,24 @@ class LoanController extends BaseController
             ->orderBy('payment_due_date')
             ->get();
 
-        $payments = PaymentSubmissions::where('loan_number', $loanModel->loan_number)
+        $allPayments = PaymentSubmissions::where('loan_number', $loanModel->loan_number)
             ->where('submission_status', 11)
-            ->get()
-            ->groupBy('schedule_id');
+            ->get();
+
+        $payments = $allPayments->groupBy('schedule_id');
 
         $scheduleData = $schedules->map(function ($schedule) use ($payments) {
-            $paid = $payments->get($schedule->id)?->sum('amount') ?? 0;
-            $balance = $schedule->payment_total_amount - $paid;
+            $paid    = (float) ($payments->get($schedule->id)?->sum('amount') ?? 0);
+            $balance = (float) ($schedule->payment_total_amount - $paid);
 
             return [
                 'id'         => $schedule->id,
                 'due_date'   => $schedule->payment_due_date,
-                'principal'  => $this->parseNumber($schedule->payment_principal_amount),
-                'interest'   => $this->parseNumber($schedule->payment_interest_amount),
-                'total_due'  => $this->parseNumber($schedule->payment_total_amount),
+                'principal'  => (float)($schedule->payment_principal_amount),
+                'interest'   => (float)($schedule->payment_interest_amount),
+                'total_due'  => (float)($schedule->payment_total_amount),
                 'paid'       => $paid,
-                'balance'    => $this->parseNumber($balance),
+                'balance'    => (float)($balance),
                 'is_overdue' => Carbon::parse($schedule->payment_due_date)->isPast() && $balance > 0,
                 'is_paid'    => $paid > 0,
                 'overdue_flag'    => $schedule->overdue_flag,
@@ -263,9 +266,9 @@ class LoanController extends BaseController
             'loan'      => $this->transformLoan($loanModel),
             'schedules' => $scheduleData,
             'summary'   => [
-                'total_due'  => $this->parseNumber($schedules->sum('payment_total_amount')),
-                'total_paid' => $this->parseNumber($payments->sum('amount')),
-                'remaining'  => $this->parseNumber($schedules->sum('payment_total_amount') - $payments->sum('amount')),
+                'total_due'  => (float) $schedules->sum('payment_total_amount'),
+                'total_paid' => (float) $allPayments->sum('amount'),
+                'remaining'  => (float) ($schedules->sum('payment_total_amount') - $allPayments->sum('amount')),
             ]
         ]);
     }
@@ -321,7 +324,7 @@ class LoanController extends BaseController
 
             $file = $request->file('attachment');
             $filename = time() . '.' . $file->getClientOriginalExtension();
-            $file->move(base_path('../terminal_public/uploads/loans'), $filename);
+            $file->move(base_path('../t11.auth_public/uploads/loans'), $filename);
 
             // IMPORTANT: Store the customerZone->id in the customer field, not the actual customer id
             $loan = Loans::create([
@@ -426,11 +429,11 @@ class LoanController extends BaseController
                     'start_date' => $validated['start_date'],
                     'end_date'   => $validated['end_date'],
                     'status'     => Loans::STATUS_ACTIVE,
-                ]);
+                ]); 
 
                 //$branch->decrement('balance', $loanModel->principal_amount);
                 $bankController = new BankController();
-                $bankController->disburseLoan($loanModel->id, $fundingAccount->id, $validated['remarks']);
+                $bankController->disburseLoan($loanModel->id, $fundingAccount->id, $validated['remarks'] ?? 'Loan Disbursed');
             });
 
             $this->userLogService->log('Approve', "Approve loan: {$loanModel->loan_number}", $this->getUserId(), $companyId);
@@ -454,7 +457,7 @@ class LoanController extends BaseController
                 'remarks' => 'required|string|max:255',
             ]);
 
-            $loanModel = Loans::where('loan_number', $loan)
+            $loanModel = Loans::where('id', $loan)
                 ->where('company', $this->getCompanyId())
                 ->where('status', Loans::STATUS_SUBMITTED)
                 ->first();

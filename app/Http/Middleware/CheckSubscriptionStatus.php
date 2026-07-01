@@ -22,6 +22,11 @@ class CheckSubscriptionStatus
      */
     public function handle(Request $request, Closure $next): Response
     {
+        // Allow WhatsApp webhook without authentication
+        if ($request->is('whatsapp')) {
+            return $next($request);
+        }
+
         try {
             $user = JWTAuth::parseToken()->getPayload();
             $user_company = $user->get('company');

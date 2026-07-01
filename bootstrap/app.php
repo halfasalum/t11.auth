@@ -13,14 +13,22 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $middleware->validateCsrfTokens(except: [
+            '/whatsapp',
+        ]);
+
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
             \Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets::class,
             \App\Http\Middleware\JwtMiddleware::class,
-            \App\Http\Middleware\ControlAccessMiddleware::class,
             \App\Http\Middleware\HandleCors::class,
-            \App\Http\Middleware\CheckSubscriptionLimits::class,
             \App\Http\Middleware\CheckSubscriptionStatus::class,
+        ]);
+
+        // Per-route middleware aliases (require parameters, must NOT be in global group)
+        $middleware->alias([
+            'control.access'       => \App\Http\Middleware\ControlAccessMiddleware::class,
+            'subscription.limits'  => \App\Http\Middleware\CheckSubscriptionLimits::class,
             'subscription.feature' => \App\Http\Middleware\CheckSubscriptionFeature::class,
         ]);
 

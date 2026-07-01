@@ -30,13 +30,14 @@ class LoanPaymentSchedules extends Model
 
     protected $casts = [
         'payment_due_date' => 'date',
-        'payment_total_amount' => 'decimal:2',
-        'payment_principal_amount' => 'decimal:2',
-        'payment_interest_amount' => 'decimal:2',
-        'penalty_amount' => 'decimal:2',
+        'payment_total_amount' => 'double',
+        'payment_principal_amount' => 'double',
+        'payment_interest_amount' => 'double',
+        'penalty_amount' => 'double',
     ];
 
 
+    
 
     /**
      * Get the loan associated with this payment schedule

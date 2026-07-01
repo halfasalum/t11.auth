@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Api\V2;
 
+use App\Models\Company;
+use App\Models\Subscription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -16,7 +18,7 @@ class BaseController
     {
         return JWTAuth::parseToken()->getPayload()->toArray();
     }
-    
+
     /**
      * Get authenticated user ID
      */
@@ -32,7 +34,7 @@ class BaseController
     {
         return $this->getUserPayload()['name'];
     }
-    
+
     /**
      * Get authenticated user's company ID
      */
@@ -40,7 +42,7 @@ class BaseController
     {
         return $this->getUserPayload()['company'];
     }
-    
+
     /**
      * Get authenticated user's permissions
      */
@@ -48,7 +50,7 @@ class BaseController
     {
         return $this->getUserPayload()['controls'] ?? [];
     }
-    
+
     /**
      * Check if user has a specific permission
      */
@@ -56,7 +58,7 @@ class BaseController
     {
         return in_array($permissionId, $this->getUserPermissions());
     }
-    
+
     /**
      * Check if user has any of the given permissions
      */
@@ -64,7 +66,7 @@ class BaseController
     {
         return !empty(array_intersect($permissionIds, $this->getUserPermissions()));
     }
-    
+
     /**
      * Get user's assigned zones
      */
@@ -72,7 +74,7 @@ class BaseController
     {
         return $this->getUserPayload()['zonesId'] ?? [];
     }
-    
+
     /**
      * Get user's assigned branches
      */
@@ -80,7 +82,7 @@ class BaseController
     {
         return $this->getUserPayload()['branchesId'] ?? [];
     }
-    
+
     /**
      * Success response
      */
@@ -92,7 +94,7 @@ class BaseController
             'data' => $data,
         ], $code);
     }
-    
+
     /**
      * Error response
      */
@@ -102,14 +104,14 @@ class BaseController
             'success' => false,
             'message' => $message,
         ];
-        
+
         if ($errors) {
             $response['errors'] = $errors;
         }
-        
+
         return response()->json($response, $code);
     }
-    
+
     /**
      * Validation error response
      */
@@ -117,7 +119,7 @@ class BaseController
     {
         return $this->errorResponse('Validation failed', 422, $e->errors());
     }
-    
+
     /**
      * Paginate data with consistent format
      */
@@ -133,7 +135,7 @@ class BaseController
             ],
         ];
     }
-    
+
     /**
      * Parse number from string
      */
@@ -143,12 +145,27 @@ class BaseController
         if (is_numeric($value)) return (float) $value;
         return (float) preg_replace('/[^0-9.-]/', '', $value);
     }
-    
+
     /**
      * Format currency
      */
     protected function formatCurrency($value): string
     {
         return number_format($this->parseNumber($value), 2, '.', ',');
+    }
+
+    function hasUseTrial()
+    {
+        $companyId = $this->getCompanyId();
+        $subscription = Company::where('id', $companyId)->first();
+        return $subscription->trial_used;
+    }
+
+    public function hasOtherSubscription()
+    {
+        $companyId = $this->getCompanyId();
+        $subscription = Subscription::where('company_id', $companyId)
+            ->where('plan_id', '!=', 5)->get();
+        return $subscription->count() > 0 ? true : false;
     }
 }

@@ -16,13 +16,14 @@ class Branch extends Controller
         try {
             $validated = $request->validate([
                 'branch_name' => 'bail|required|string|max:255|unique:App\Models\BranchModel,branch_name',
-                'balance' => 'bail|numeric',
+                //'balance' => 'bail|numeric',
             ]);
             $user = JWTAuth::parseToken()->getPayload();
             $user_company = $user->get('company');
             $user_id = $user->get('user_id');
             $validated['registered_by'] = $user_id;
             $validated['company']       = $user_company;
+            $validated['balance']       = 0;
 
             $company = BranchModel::create($validated);
 

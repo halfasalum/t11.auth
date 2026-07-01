@@ -4,7 +4,9 @@ namespace App\Http\Middleware;
 
 use App\Models\BranchModel;
 use App\Models\CustomersZone;
+use App\Models\Loans;
 use App\Models\Plan;
+use App\Models\Subscription;
 use App\Models\Subscriptions;
 use App\Models\User;
 use App\Models\Zone;
@@ -25,14 +27,19 @@ class CheckSubscriptionLimits
      */
     public function handle(Request $request, Closure $next, $resource): Response
     {
+        // Allow WhatsApp webhook without authentication
+        if ($request->is('whatsapp')) {
+            return $next($request);
+        }
+
         try {
             // Get the authenticated user's company from JWT
             $user = JWTAuth::parseToken()->getPayload();
             $user_company = $user->get('company');
 
             // Check for active subscription
-            $subscription = Subscriptions::where('company_id', $user_company)
-                ->where('status', 1)
+            $subscription = Subscription::where('company_id', $user_company)
+                ->where('status', 'active')
                 ->first();
             if (!$subscription) {
                 return response()->json(['message' => 'No active subscription'], 403);
@@ -50,6 +57,7 @@ class CheckSubscriptionLimits
                 'branches' => 'branch_limit',
                 'zones' => 'zone_limit',
                 'users' => 'user_limit',
+                'loans' => 'loan_limit',
             ];
 
             // If resource is not in limitMap, proceed without checking
@@ -63,16 +71,19 @@ class CheckSubscriptionLimits
 
             // Count active resources
             $customersCount = CustomersZone::where('company_id', $user_company)
-                ->where('status', 1)
+                ->whereNotIn('status', [3, 9])
                 ->count();
             $zoneCount = Zone::where('company', $user_company)
-                ->where('status', 1)
+                ->whereNotIn('status', [3, 9])
                 ->count();
             $branchCount = BranchModel::where('company', $user_company)
-                ->where('status', 1)
+                ->whereNotIn('status', [3, 9])
                 ->count();
             $userCount = User::where('user_company', $user_company)
-                ->where('status', 1)
+                ->whereNotIn('status', [3, 9])
+                ->count();
+            $loanCount = Loans::where('company', $user_company)
+                ->whereIn('status', [4,5,12,13])
                 ->count();
 
             // Determine current count based on resource
@@ -81,6 +92,7 @@ class CheckSubscriptionLimits
                 'branches' => $branchCount,
                 'zones' => $zoneCount,
                 'users' => $userCount,
+                'loans' => $loanCount,
                 default => 0,
             };
 

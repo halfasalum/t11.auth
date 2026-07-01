@@ -7,18 +7,18 @@ use Illuminate\Http\Request;
 
 class TestController extends Controller
 {
-    protected $rabbitMQProducer;
+    //protected $rabbitMQProducer;
 
-    public function __construct(RabbitMQProducer $rabbitMQProducer)
+    /* public function __construct(RabbitMQProducer $rabbitMQProducer)
     {
-        $this->rabbitMQProducer = $rabbitMQProducer;
-    }
+       // $this->rabbitMQProducer = $rabbitMQProducer;
+    } */
 
-    public function sendMessage()
+    /* public function sendMessage()
     {
         $this->rabbitMQProducer->sendMessage("Hello RabbitMQ!");
         return response()->json(['status' => 'Message sent']);
-    }
+    } */
     public function home(){
         return response()->json([
             'page'     => 'home'

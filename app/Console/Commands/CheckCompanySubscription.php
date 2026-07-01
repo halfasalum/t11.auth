@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Subscription;
 use App\Models\Subscriptions;
 use Illuminate\Console\Command;
 
@@ -26,11 +27,11 @@ class CheckCompanySubscription extends Command
      */
     public function handle()
     {
-        $subscriptions = Subscriptions::where('status', 1)
+        $subscriptions = Subscription::where('status', 'active')
             ->where('end_date', '<', now())
             ->get();
         foreach ($subscriptions as $subscription) {
-            $subscription->status = 2; // Mark as expired
+            $subscription->status = 'expired'; // Mark as expired
             $subscription->save();
             // Notify the admin or take necessary actions
             $this->info("Subscription for company ID {$subscription->company_id} has expired.");

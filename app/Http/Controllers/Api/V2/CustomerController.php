@@ -437,7 +437,9 @@ class CustomerController extends Controller
             'zoneAssignment' => function ($q) use ($companyId) {
                 $q->where('company_id', $companyId)->with('zone', 'branch');
             },
-            'loans' => function ($q) {
+            'loans' => function ($q) use ($companyId) {
+                $q->where('status', '!=', 9);
+                $q->where('company', $companyId);
                 $q->orderBy('created_at', 'desc');
             },
             'referees',
@@ -464,7 +466,7 @@ class CustomerController extends Controller
                 'total_borrowed' => $customer->loans->sum('principal_amount'),
                 'total_repaid' => $customer->loans->sum('loan_paid'),
                 'outstanding_balance' => $customer->loans->sum(function ($loan) {
-                    return ($loan->total_loan + $loan->penalty_amount) - $loan->loan_paid;
+                    return ($loan->total_loan) - $loan->loan_paid;
                 }),
             ]
         ]);
@@ -521,6 +523,7 @@ class CustomerController extends Controller
                     'loan_number' => $loan->loan_number,
                     'amount' => $loan->principal_amount,
                     'status' => $this->getLoanStatusLabel($loan->status),
+                    'status_code' => $loan->status,
                     'created_at' => $loan->created_at,
                 ];
             });
@@ -1560,6 +1563,7 @@ class CustomerController extends Controller
                 if (sizeof($customerData) > 0) {
                     foreach ($customerData as $customer) {
                         $freeLoanCustomer = Loans::where('customer', [$customer->id])
+                            ->where('company', $this->getCompanyId())
                             ->whereIn('status', [4, 5, 7, 12, 13, 14])
                             ->get();
                         if (sizeof($freeLoanCustomer) == 0) {
