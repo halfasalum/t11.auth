@@ -1046,6 +1046,70 @@ class PaymentsController extends BaseController
         ]);
     }
 
+    public function upcomingPayments($perPage = 20)
+    {
+        $user_zones = (array) $this->getUserZones();
+        $user_company = $this->getCompanyId();
+        $today = date('Y-m-d');
+
+        if (empty($user_zones)) {
+            return collect();
+        }
+
+        // 1️⃣ Get all unsubmitted payment schedules grouped by zone & date with total_target
+        $targetsQuery = LoanPaymentSchedules::selectRaw('loan_payment_schedule.zone, payment_due_date, SUM(payment_total_amount) as total_target')
+            ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+            ->where('loan_payment_schedule.is_submitted', false)
+            ->where('loan_payment_schedule.status', 1)
+            ->whereIn('loan_payment_schedule.zone', $user_zones)
+            ->where('payment_due_date', '<', $today)
+            ->whereIn('loans.status', [5, 12])
+            ->groupBy('loan_payment_schedule.zone', 'payment_due_date');
+
+        // 2️⃣ Get total collected for same zones & dates
+        $collectedQuery = PaymentSubmissions::selectRaw('loan_payment_schedule.zone, loan_payment_schedule.payment_due_date, SUM(payment_submissions.amount) as total_paid')
+            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+            ->where('loan_payment_schedule.is_submitted', false)
+            ->where('loan_payment_schedule.status', 1)
+            ->whereIn('loan_payment_schedule.zone', $user_zones)
+            ->where('loan_payment_schedule.payment_due_date', '>', $today)
+            ->groupBy('loan_payment_schedule.zone', 'loan_payment_schedule.payment_due_date');
+
+        $targets = $targetsQuery->get();
+        $collected = $collectedQuery->get()->keyBy(fn($item) => $item->zone . '_' . $item->payment_due_date);
+
+        // 3️⃣ Get zone names
+        $zoneNames = Zone::whereIn('id', $user_zones)->get()->keyBy('id');
+
+        // 4️⃣ Merge target and collected
+        $merged = $targets->map(function ($targetItem) use ($collected, $zoneNames) {
+            $key = $targetItem->zone . '_' . $targetItem->payment_due_date;
+            $matchingCollected = $collected->get($key);
+            return [
+                'zone' => $targetItem->zone,
+                'zone_name' => $zoneNames[$targetItem->zone]->zone_name ?? null,
+                'payment_date' => $targetItem->payment_due_date,
+                'total_target' => $targetItem->total_target,
+                'total_paid' => $matchingCollected ? $matchingCollected->total_paid : 0,
+            ];
+        });
+
+        // 5️⃣ Optional: paginate manually
+        $page = request()->get('page', 1);
+        $perPage = (int) $perPage;
+        $paginated = $merged->forPage($page, $perPage)->values();
+
+        return response()->json([
+            'data' => $paginated,
+            'meta' => [
+                'total' => $merged->count(),
+                'per_page' => $perPage,
+                'current_page' => (int)$page,
+                'last_page' => ceil($merged->count() / $perPage),
+            ]
+        ]);
+    }
+
     public function unfilledDayPayments($zone = null, $date = null, Request $request)
     {
         $user_company = $this->getCompanyId();

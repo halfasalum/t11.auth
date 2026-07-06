@@ -4,6 +4,14 @@ use App\Http\Controllers\Api\V2\AIController;
 use App\Http\Controllers\Api\V2\CompanyRegistrationController;
 use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaContributionController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaFinancialYearController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberProductController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaMemberController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaPenaltyController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaProductController;
 use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
 use App\Http\Controllers\Api\V2\LoansProductsController;
@@ -201,6 +209,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/payments/branch-approval', [LoanPaymentsController::class, 'getBranchApprovalData']);
         Route::get('/payments/previous-approvals', [LoanPaymentsController::class, 'getPreviousApprovalsData']);
         Route::get('/payments/unfilled', [LoanPaymentsController::class, 'getUnfilledPaymentsData']);
+        Route::get('/payments/upcoming', [LoanPaymentsController::class, 'getUpcomingPaymentsData']);
         Route::get('/payments/rejected', [LoanPaymentsController::class, 'getRejectedPaymentsData']);
         Route::post('/schedule/manual', [LoanController::class, 'addManualSchedule']);
         Route::get('/schedule/template/{loanNumber}', [LoanController::class, 'getScheduleTemplate']);
@@ -418,5 +427,80 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/loan-analysis/{loanId}', [AIController::class, 'getLoanAnalysis']);
         Route::get('/history', [AIController::class, 'getConversationHistory']);
         Route::post('/clear-history', [AIController::class, 'clearHistory']);
+    });
+
+
+    Route::prefix('kikoba')->group(function () {
+
+        // Members registry
+        Route::get('members', [KikobaMemberController::class, 'index']);
+        Route::post('members', [KikobaMemberController::class, 'store']);
+        Route::get('members/{id}', [KikobaMemberController::class, 'show']);
+        Route::put('members/{id}', [KikobaMemberController::class, 'update']);
+        Route::delete('members/{id}', [KikobaMemberController::class, 'destroy']);
+
+        // Financial years (company-wide)
+        Route::get('financial-years', [KikobaFinancialYearController::class, 'index']);
+        Route::post('financial-years', [KikobaFinancialYearController::class, 'store']);
+        Route::get('financial-years/{id}', [KikobaFinancialYearController::class, 'show']);
+        Route::put('financial-years/{id}', [KikobaFinancialYearController::class, 'update']);
+        Route::delete('financial-years/{id}', [KikobaFinancialYearController::class, 'destroy']);
+        Route::post('financial-years/{id}/activate', [KikobaFinancialYearController::class, 'activate']);
+
+        // Product catalogue (company-wide)
+        Route::get('products', [KikobaProductController::class, 'index']);
+        Route::post('products', [KikobaProductController::class, 'store']);
+        Route::get('products/{id}', [KikobaProductController::class, 'show']);
+        Route::put('products/{id}', [KikobaProductController::class, 'update']);
+        Route::delete('products/{id}', [KikobaProductController::class, 'destroy']);
+
+        // Groups
+        Route::get('groups', [KikobaGroupController::class, 'index']);
+        Route::post('groups', [KikobaGroupController::class, 'store']);
+        Route::get('groups/{id}', [KikobaGroupController::class, 'show']);
+        Route::put('groups/{id}', [KikobaGroupController::class, 'update']);
+        Route::delete('groups/{id}', [KikobaGroupController::class, 'destroy']);
+        Route::put('groups/{groupId}/financial-years/{allocationId}', [KikobaGroupController::class, 'updateAllocatedFinancialYear']);
+        Route::delete('groups/{groupId}/financial-years/{allocationId}', [KikobaGroupController::class, 'removeAllocatedFinancialYear']);
+
+        // Group <-> Product assignment (with per-group overrides)
+        Route::get('groups/{groupId}/products', [KikobaGroupController::class, 'products']);
+        Route::post('groups/{groupId}/products', [KikobaGroupController::class, 'attachProduct']);
+        Route::put('groups/{groupId}/products/{groupProductId}', [KikobaGroupController::class, 'updateProduct']);
+        Route::delete('groups/{groupId}/products/{groupProductId}', [KikobaGroupController::class, 'detachProduct']);
+
+        // Group <-> Financial Year cycle history
+        Route::get('groups/{groupId}/financial-years', [KikobaGroupController::class, 'financialYears']);
+        Route::post('groups/{groupId}/financial-years', [KikobaGroupController::class, 'startFinancialYear']);
+        Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close', [KikobaGroupController::class, 'closeFinancialYear']);
+
+        // Group members
+        Route::get('groups/{groupId}/members', [KikobaGroupMemberController::class, 'index']);
+        Route::post('groups/{groupId}/members', [KikobaGroupMemberController::class, 'store']);
+        Route::put('groups/{groupId}/members/{groupMemberId}', [KikobaGroupMemberController::class, 'update']);
+        Route::delete('groups/{groupId}/members/{groupMemberId}', [KikobaGroupMemberController::class, 'destroy']);
+
+        // Group member <-> Product enrollment (units, triggers schedule generation)
+        Route::get('groups/{groupId}/members/{groupMemberId}/products', [KikobaGroupMemberProductController::class, 'index']);
+        Route::post('groups/{groupId}/members/{groupMemberId}/products', [KikobaGroupMemberProductController::class, 'store']);
+        Route::put('groups/{groupId}/members/{groupMemberId}/products/{memberProductId}', [KikobaGroupMemberProductController::class, 'update']);
+        Route::delete('groups/{groupId}/members/{groupMemberId}/products/{memberProductId}', [KikobaGroupMemberProductController::class, 'destroy']);
+        Route::get('groups/{groupId}/financial-years/available', [KikobaGroupController::class, 'getAvailableFinancialYears']);
+        Route::get('groups/{groupId}/financial-years/allocated', [KikobaGroupController::class, 'getAllocatedFinancialYears']);
+        Route::post('groups/{groupId}/financial-years/allocate', [KikobaGroupController::class, 'allocateFinancialYear']);
+
+        // Contribution schedules (read-only — what's due for a given enrollment)
+        Route::get('groups/{groupId}/members/{groupMemberId}/products/{memberProductId}/schedules', [KikobaGroupMemberProductController::class, 'schedules']);
+
+        // Contributions (actual payments)
+        Route::get('contributions', [KikobaContributionController::class, 'index']);
+        Route::post('contributions', [KikobaContributionController::class, 'store']);
+        Route::get('contributions/{id}', [KikobaContributionController::class, 'show']);
+
+        // Penalties
+        Route::get('penalties', [KikobaPenaltyController::class, 'index']);
+        Route::post('penalties/{id}/waive', [KikobaPenaltyController::class, 'waive']);
+        Route::post('penalties/{id}/mark-paid', [KikobaPenaltyController::class, 'markPaid']);
+        Route::post('penalties/run-detection', [KikobaPenaltyController::class, 'runDetection']);
     });
 });

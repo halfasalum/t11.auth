@@ -20,6 +20,7 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class LoanPaymentsController extends BaseController
@@ -329,6 +330,56 @@ class LoanPaymentsController extends BaseController
             return $this->errorResponse('Failed to load unfilled payments: ' . $e->getMessage(), 500);
         }
     }
+    public function getUpcomingPaymentsData(UserLogService $userLogService): JsonResponse
+    {
+        try {
+            $userId = $this->getUserId();
+            $userZones = $this->getUserZones();
+
+            $userLogService->log('Access', "Access unfilled payments", $userId, $this->getCompanyId());
+
+            if (empty($userZones)) {
+                return $this->successResponse([], 'No unfilled payments found');
+            }
+
+            $today = Carbon::today()->toDateString();
+
+            $unfilled = LoanPaymentSchedules::select(
+                'loan_payment_schedule.zone',
+                'loan_payment_schedule.payment_due_date',
+                DB::raw('SUM(loan_payment_schedule.payment_total_amount) as total_target')
+            )
+                ->join('loans', 'loans.loan_number', '=', 'loan_payment_schedule.loan_number')
+                ->whereIn('loan_payment_schedule.zone', $userZones)
+                ->where('loan_payment_schedule.payment_due_date', '>', $today)
+                ->where('loan_payment_schedule.is_submitted', false)
+                ->where('loan_payment_schedule.status', 1)
+                ->whereIn('loans.status', [5, 12])
+                ->groupBy('loan_payment_schedule.zone', 'loan_payment_schedule.payment_due_date')
+                ->get();
+
+            if ($unfilled->isEmpty()) {
+                return $this->successResponse([], 'No unfilled payments found');
+            }
+
+            $zoneIds = $unfilled->pluck('zone')->unique();
+            $zoneNames = Zone::whereIn('id', $zoneIds)->pluck('zone_name', 'id');
+
+            $formattedData = $unfilled->map(function ($item) use ($zoneNames) {
+                return [
+                    'zone' => $item->zone,
+                    'zone_name' => $zoneNames[$item->zone] ?? 'Unknown',
+                    'payment_date' => date('Y-m-d', strtotime($item->payment_due_date)),
+                    'total_target' => (float) $item->total_target,
+                    'total_paid' => 0,
+                ];
+            })->values();
+            return $this->successResponse($formattedData, 'Upcoming payments retrieved successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to load upcoming payments: ' . $e->getMessage());
+            return $this->errorResponse('Failed to load upcoming payments: ' . $e->getMessage(), 500);
+        }
+    }
 
     /**
      * Get rejected payments (for Rejected Payments tab)
@@ -380,7 +431,7 @@ class LoanPaymentsController extends BaseController
                 return [
                     'zone' => $item->zone,
                     'zone_name' => $zoneNames[$item->zone] ?? 'Unknown',
-                    'payment_date' =>date('Y-m-d', strtotime($item->payment_due_date)),
+                    'payment_date' => date('Y-m-d', strtotime($item->payment_due_date)),
                     'total_target' => (float) $item->total_target,
                     'total_paid' => (float) $item->total_paid,
                 ];
@@ -664,7 +715,7 @@ class LoanPaymentsController extends BaseController
     /**
      * Approve branch payments (head office)
      */
-    public function approveBranchPayments(Request $request, UserLogService $userLogService): JsonResponse
+   /*  public function approveBranchPayments(Request $request, UserLogService $userLogService): JsonResponse
     {
         try {
             $validated = $request->validate([
@@ -734,12 +785,12 @@ class LoanPaymentsController extends BaseController
             return $this->errorResponse('Failed to approve branch payments: ' . $e->getMessage(), 500);
         }
     }
-
+ */
 
     /**
      * Update loan balances after approval
      */
-    private function updateLoanBalances(int $branchId, string $paymentDate): void
+    /*  private function updateLoanBalances(int $branchId, string $paymentDate): void
     {
         $approvedPayments = PaymentSubmissions::where('submission_status', 11)
             ->where('branch', $branchId)
@@ -774,6 +825,153 @@ class LoanPaymentsController extends BaseController
                 if ($newPaidAmount >= $totalDue) {
                     $loan->update(['status' => Loans::STATUS_COMPLETED]);
                 }
+            }
+        }
+    } */
+
+
+    public function approveBranchPayments(Request $request, UserLogService $userLogService): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'branch' => 'required|integer',
+                'payment_date' => 'required|date',
+            ]);
+
+            $userId = $this->getUserId();
+            $userCompany = $this->getCompanyId();
+
+            $userLogService->log(
+                'Approve',
+                "Approve branch {$validated['branch']} payments for {$validated['payment_date']}",
+                $userId,
+                $userCompany
+            );
+
+            DB::beginTransaction();
+
+            // Fetch the exact set of pending submissions for this branch/date,
+            // eager-loading schedule + loan to avoid N+1 queries in the loop.
+            $paymentsLists = PaymentSubmissions::where('submission_status', 8)
+                ->where('branch', $validated['branch'])
+                ->whereHas('schedule', function ($query) use ($validated) {
+                    $query->where('payment_due_date', $validated['payment_date']);
+                })
+                ->with(['schedule.loan'])
+                ->lockForUpdate()
+                ->get();
+
+            if ($paymentsLists->isEmpty()) {
+                DB::commit();
+                return $this->successResponse(
+                    ['updated_count' => 0],
+                    'No pending payments found for this branch and date.'
+                );
+            }
+
+            $bank = new BankController();
+
+            foreach ($paymentsLists as $payment) {
+                if ($payment->amount > 0 && !empty($payment->paid_account)) {
+                    $schedule = $payment->schedule;
+                    $loanData = $schedule?->loan;
+
+                    if (!$schedule || !$loanData) {
+                        Log::warning("Missing schedule or loan for payment submission {$payment->id}");
+                        continue;
+                    }
+
+                    $bank->registerTransaction(
+                        $payment->paid_account,
+                        $payment->amount,
+                        'credit',
+                        $schedule->payment_due_date,
+                        false,
+                        $payment->branch,
+                        $payment->zone,
+                        $payment->loan_number,
+                        $loanData->customer,
+                        $schedule->id
+                    );
+                }
+            }
+
+            // Capture exactly which submissions we're approving in this batch,
+            // so updateLoanBalances only touches these rows — never previously
+            // approved rows from an earlier batch on the same branch/date.
+            $submissionIds = $paymentsLists->pluck('id');
+
+            $updated = PaymentSubmissions::whereIn('id', $submissionIds)
+                ->update(['submission_status' => 11]);
+
+            // Update loan balances only for this batch
+            $this->updateLoanBalances($submissionIds);
+
+            DB::commit();
+
+            return $this->successResponse(
+                ['updated_count' => $updated],
+                "Branch payments approved successfully. {$updated} records updated."
+            );
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Branch approval error: ' . $e->getMessage());
+
+            return $this->errorResponse('Failed to approve branch payments: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Update loan balances after approval.
+     *
+     * Scoped strictly to the given submission IDs (the batch just approved),
+     * never re-derived from submission_status + branch + date, to avoid
+     * double-counting loan_paid on repeated approvals for the same date.
+     */
+    private function updateLoanBalances(Collection $submissionIds): void
+    {
+        if ($submissionIds->isEmpty()) {
+            return;
+        }
+
+        $approvedPayments = PaymentSubmissions::whereIn('id', $submissionIds)
+            ->with(['loan'])
+            ->get();
+
+        foreach ($approvedPayments as $payment) {
+            if ($payment->amount == 0) {
+                $this->updateLoanPenalty($payment->schedule_id, $payment->loan_number);
+            }
+
+            // Single feedback call, regardless of amount
+            $this->paymentFeedback->sendFeedback($payment->schedule_id);
+
+            // Update loan payment record
+            LoanPayments::where('loan_number', $payment->loan_number)
+                ->where('schedule_id', $payment->schedule_id)
+                ->where('branch', $payment->branch)
+                ->update(['status' => 11]);
+
+            // Lock the loan row before read-modify-write to avoid races
+            // with concurrent payment processing on the same loan.
+            $loan = Loans::where('loan_number', $payment->loan_number)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$loan) {
+                Log::warning("Loan not found for loan_number {$payment->loan_number}");
+                continue;
+            }
+
+            $newPaidAmount = ($loan->loan_paid ?? 0) + $payment->amount;
+            $loan->update(['loan_paid' => $newPaidAmount]);
+
+            // Check if loan is completed
+            $totalDue = $loan->total_loan + ($loan->penalty_amount ?? 0);
+            if ($newPaidAmount >= $totalDue) {
+                $loan->update(['status' => Loans::STATUS_COMPLETED]);
             }
         }
     }

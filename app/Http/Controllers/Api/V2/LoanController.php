@@ -429,7 +429,7 @@ class LoanController extends BaseController
                     'start_date' => $validated['start_date'],
                     'end_date'   => $validated['end_date'],
                     'status'     => Loans::STATUS_ACTIVE,
-                ]); 
+                ]);
 
                 //$branch->decrement('balance', $loanModel->principal_amount);
                 $bankController = new BankController();
@@ -667,7 +667,7 @@ class LoanController extends BaseController
         return "{$prefix}-{$newIncrement}";
     }
 
-    protected function generateInstallmentSchedule($loan, $startDate, $endDate)
+    /*  protected function generateInstallmentSchedule($loan, $startDate, $endDate)
     {
         $start = Carbon::parse($startDate);
         $end = Carbon::parse($endDate);
@@ -726,9 +726,114 @@ class LoanController extends BaseController
         }
 
         return $installments;
-    }
+    } */
 
     // In your LoanController.php
+
+
+    protected function generateInstallmentSchedule($loan, $startDate, $endDate)
+    {
+        $start = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->startOfDay();
+        $totalDays = $start->diffInDays($end);
+
+        $product = LoansProducts::find($loan->product);
+        $interval = (int) ($product->repayment_interval ?? 1);
+        $intervalUnit = strtolower($product->repayment_interval_unit ?? 'months');
+
+        // Guard against interval = 0, which would cause division-by-zero below
+        $interval = max(1, $interval);
+
+        // Installment count — now interval-aware for months too (previously
+        // just used $loan->loan_period directly, ignoring repayment_interval)
+        if ($intervalUnit === 'days') {
+            $installmentCount = (int) ceil($totalDays / $interval);
+        } elseif ($intervalUnit === 'weeks') {
+            $installmentCount = (int) ceil($totalDays / ($interval * 7));
+        } elseif ($intervalUnit === 'months') {
+            $tempDate = $start->copy();
+            $installmentCount = 0;
+            while ($tempDate->lessThan($end)) {
+                $tempDate->addMonths($interval);
+                $installmentCount++;
+            }
+        } else {
+            $installmentCount = (int) ($loan->loan_period ?? 1);
+        }
+
+        $installmentCount = max(1, $installmentCount);
+
+        $totalLoanAmount = (float) $loan->total_loan;
+
+        // Round up front and track the rounding difference, folding it into
+        // the last installment so the sum always equals total_loan exactly
+        $installmentAmount = round($totalLoanAmount / $installmentCount, 2);
+        $totalFromInstallments = $installmentAmount * $installmentCount;
+        $difference = round($totalLoanAmount - $totalFromInstallments, 2);
+
+        $holidays = $this->getHolidays($loan->company);
+        $interestMode = $product->interest_mode;
+
+        $installments = [];
+        $currentDate = $start->copy();
+
+        for ($i = 0; $i < $installmentCount; $i++) {
+            // Compute the raw (un-adjusted) due date first
+            if ($intervalUnit === 'days') {
+                $rawDueDate = $currentDate->copy()->addDays($interval);
+            } elseif ($intervalUnit === 'weeks') {
+                $rawDueDate = $currentDate->copy()->addWeeks($interval);
+            } else {
+                $rawDueDate = $currentDate->copy()->addMonths($interval);
+            }
+
+            // Adjust for weekends AND holidays (previous version only skipped weekends)
+            $dueDate = $rawDueDate->copy();
+            $maxAttempts = 30;
+            $attempts = 0;
+            while ($attempts < $maxAttempts) {
+                $isWeekend = ($product->skip_sat && $dueDate->isSaturday())
+                    || ($product->skip_sun && $dueDate->isSunday());
+                $isHoliday = in_array($dueDate->toDateString(), $holidays, true);
+
+                if (!$isWeekend && !$isHoliday) {
+                    break;
+                }
+
+                $dueDate->addDay();
+                $attempts++;
+            }
+
+            // Add rounding difference to the last installment
+            $amount = $installmentAmount;
+            if ($i === $installmentCount - 1 && $difference != 0) {
+                $amount = round($installmentAmount + $difference, 2);
+            }
+
+            // Interest/principal split based on product's interest mode
+            if ($interestMode == 1) {
+                $interest = round(($product->interest_amount ?? 0) / $installmentCount, 2);
+                $principal = round($amount - $interest, 2);
+            } else {
+                $interest = round(($amount * ($product->interest_rate ?? 0)) / 100, 2);
+                $principal = round($amount - $interest, 2);
+            }
+
+            $installments[] = [
+                'due_date'  => $dueDate->toDateString(),
+                'principal' => $principal,
+                'interest'  => $interest,
+                'total'     => $amount,
+            ];
+
+            // Anchor next iteration off the RAW date, not the weekend/holiday
+            // adjusted one — prevents cadence drift when a due date gets pushed
+            $currentDate = $rawDueDate->copy();
+        }
+
+        return $installments;
+    }
+
 
     public function getApprovalData($loanId)
     {
@@ -995,7 +1100,8 @@ class LoanController extends BaseController
                 $difference,
                 $skipSaturday,
                 $skipSunday,
-                $holidays
+                $holidays,
+                $product
             );
 
             // Calculate summary statistics
@@ -1104,7 +1210,7 @@ class LoanController extends BaseController
     /**
      * Generate installment schedule
      */
-    private function generateInstallments(
+    /* private function generateInstallments(
         Carbon $startDate,
         int $paymentInterval,
         string $paymentIntervalUnit,
@@ -1149,6 +1255,74 @@ class LoanController extends BaseController
                 'amount_formatted' => number_format($amount, 2),
                 'principal' => $principalPortion,
                 'interest' => $interestPortion,
+                'is_weekend' => $dueDate->isWeekend(),
+                'day_name' => $dueDate->format('l')
+            ];
+
+            // Set current date for next iteration
+            $currentDate = $dueDate->copy();
+        }
+
+        return $installments;
+    } */
+
+    /**
+     * Generate installment schedule
+     */
+    private function generateInstallments(
+        Carbon $startDate,
+        int $paymentInterval,
+        string $paymentIntervalUnit,
+        int $totalInstallments,
+        float $installmentAmount,
+        float $difference,
+        bool $skipSaturday,
+        bool $skipSunday,
+        array $holidays,
+        $product              // ← added param (LoansProducts model)
+    ): array {
+        $installments = [];
+        $currentDate = $startDate->copy();
+        $remainingDifference = $difference;
+        $interestMode = $product->interest_mode ?? 2; // default to percentage mode if unset
+
+        for ($i = 0; $i < $totalInstallments; $i++) {
+            // Move to next payment date
+            $dueDate = $this->addUnit($currentDate, $paymentIntervalUnit, $paymentInterval);
+
+            // Skip weekends and holidays
+            $dueDate = $this->adjustForWeekendsAndHolidays(
+                $dueDate,
+                $skipSaturday,
+                $skipSunday,
+                $holidays
+            );
+
+            // Calculate amount (add difference to last installment)
+            $amount = $installmentAmount;
+            if ($i === $totalInstallments - 1 && $remainingDifference != 0) {
+                $amount = round($installmentAmount + $remainingDifference, 2);
+            }
+
+            // Calculate principal and interest portions based on the product's interest mode
+            if ($interestMode == 1) {
+                // Fixed interest amount, split evenly across installments
+                $interest = round(($product->interest_amount ?? 0) / $totalInstallments, 2);
+                $principal = round($amount - $interest, 2);
+            } else {
+                // Percentage-based interest, applied to this installment's amount
+                $interest = round(($amount * ($product->interest_rate ?? 0)) / 100, 2);
+                $principal = round($amount - $interest, 2);
+            }
+
+            $installments[] = [
+                'installment_no' => $i + 1,
+                'due_date' => $dueDate->toDateString(),
+                'due_date_formatted' => $dueDate->format('d M Y'),
+                'amount' => $amount,
+                'amount_formatted' => number_format($amount, 2),
+                'principal' => $principal,
+                'interest' => $interest,
                 'is_weekend' => $dueDate->isWeekend(),
                 'day_name' => $dueDate->format('l')
             ];
@@ -2188,6 +2362,7 @@ class LoanController extends BaseController
             $templateSchedule = LoanPaymentSchedules::where('loan_number', $validated['loan_number'])
                 ->where('status', 1)
                 ->where('payment_principal_amount', '>', 0)
+                ->orderBy('payment_due_date', 'desc')
                 ->first();
 
             if (!$templateSchedule) {
@@ -2205,6 +2380,9 @@ class LoanController extends BaseController
 
             $zone = $loan->zone;
             $zoneData = Zone::where('id', $zone)->first();
+            if (!$zoneData) {
+                return $this->errorResponse('Zone not found for this loan', 422);
+            }
             $branch = $zoneData->branch;
 
             // Create new schedule by copying template amounts
@@ -2255,6 +2433,7 @@ class LoanController extends BaseController
             $templateSchedule = LoanPaymentSchedules::where('loan_number', $loanNumber)
                 ->where('status', 1)
                 ->where('payment_principal_amount', '>', 0)
+                ->orderBy('payment_due_date', 'desc')
                 ->first();
 
             if (!$templateSchedule) {
