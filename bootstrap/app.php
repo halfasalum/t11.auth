@@ -23,6 +23,12 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\JwtMiddleware::class,
             \App\Http\Middleware\HandleCors::class,
             \App\Http\Middleware\CheckSubscriptionStatus::class,
+            \App\Http\Middleware\LogUserActivity::class,
+        ]);
+
+        // Records every authenticated request into `user_logs` (see config/activity.php).
+        $middleware->api(append: [
+            \App\Http\Middleware\LogUserActivity::class,
         ]);
 
         // Per-route middleware aliases (require parameters, must NOT be in global group)
@@ -30,6 +36,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'control.access'       => \App\Http\Middleware\ControlAccessMiddleware::class,
             'subscription.limits'  => \App\Http\Middleware\CheckSubscriptionLimits::class,
             'subscription.feature' => \App\Http\Middleware\CheckSubscriptionFeature::class,
+            'activity.log'         => \App\Http\Middleware\LogUserActivity::class,
         ]);
 
         //

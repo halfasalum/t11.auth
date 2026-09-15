@@ -21,8 +21,8 @@ class KikobaContributionService
             $memberProduct = KikobaGroupMemberProduct::findOrFail($data['kikoba_group_member_product_id']);
             $amount = (float) $data['amount'];
 
-            if ($amount <= 0) {
-                throw new InvalidArgumentException('Contribution amount must be greater than zero.');
+            if ($amount < 0) {
+                throw new InvalidArgumentException('Contribution amount must be greater than or equal to zero.');
             }
 
             $scheduleId = $data['kikoba_contribution_schedule_id'] ?? null;

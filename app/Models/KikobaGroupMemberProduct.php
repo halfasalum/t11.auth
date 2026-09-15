@@ -33,12 +33,12 @@ class KikobaGroupMemberProduct extends Model
 
     public function schedules(): HasMany
     {
-        return $this->hasMany(KikobaContributionSchedule::class);
+        return $this->hasMany(KikobaContributionSchedule::class,'group_member_product_id');
     }
 
     public function contributions(): HasMany
     {
-        return $this->hasMany(KikobaContribution::class);
+        return $this->hasMany(KikobaContribution::class,'group_member_product_id');
     }
 
     // Resolves effective value using group-level override if set, else product default

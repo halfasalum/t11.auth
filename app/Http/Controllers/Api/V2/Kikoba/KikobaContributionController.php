@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V2\Kikoba;
 use App\Http\Controllers\Api\V2\BaseController;
 use App\Models\KikobaContribution;
 use App\Models\KikobaGroupMemberProduct;
+use App\Models\KikobaMember;
 use App\Services\Kikoba\KikobaContributionService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -12,16 +13,14 @@ use InvalidArgumentException;
 
 class KikobaContributionController extends BaseController
 {
-    public function __construct(protected KikobaContributionService $contributionService)
-    {
-    }
+    public function __construct(protected KikobaContributionService $contributionService) {}
 
     public function index(Request $request)
     {
         $query = KikobaContribution::query()
             ->whereHas(
                 'memberProduct.groupMember.group',
-                fn ($q) => $q->where('company_id', $this->getCompanyId())
+                fn($q) => $q->where('company_id', $this->getCompanyId())
             )
             ->with(['memberProduct.groupMember.member', 'memberProduct.groupProduct.product', 'schedule']);
 
@@ -32,7 +31,7 @@ class KikobaContributionController extends BaseController
         if ($request->filled('kikoba_group_id')) {
             $query->whereHas(
                 'memberProduct.groupMember',
-                fn ($q) => $q->where('kikoba_group_id', $request->integer('kikoba_group_id'))
+                fn($q) => $q->where('kikoba_group_id', $request->integer('kikoba_group_id'))
             );
         }
 
@@ -42,6 +41,71 @@ class KikobaContributionController extends BaseController
 
         if ($request->filled('to_date')) {
             $query->whereDate('paid_date', '<=', $request->date('to_date'));
+        }
+
+        $contributions = $query->orderByDesc('paid_date')->paginate((int) $request->input('per_page', 20));
+
+        return $this->successResponse($this->paginateResponse($contributions));
+    }
+
+
+    public function forMember(Request $request, int $memberId)
+    {
+        $companyId = $this->getCompanyId();
+
+        $member = KikobaMember::where('company_id', $companyId)->find($memberId);
+
+        if (! $member) {
+            return $this->errorResponse('Member not found', 404);
+        }
+
+        try {
+            $filters = $request->validate([
+                'product_id' => 'nullable|integer|exists:kikoba_products,id',
+                'financial_year_id' => 'nullable|integer|exists:kikoba_financial_years,id',
+                'from_date' => 'nullable|date',
+                'to_date' => 'nullable|date',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $query = KikobaContribution::query()
+            ->whereHas(
+                'memberProduct.groupMember',
+                fn($q) => $q->where('kikoba_member_id', $memberId)
+            )
+            ->whereHas(
+                'memberProduct.groupMember.group',
+                fn($q) => $q->where('company_id', $companyId)
+            )
+            ->with([
+                'memberProduct.groupProduct.product',
+                'memberProduct.groupMember.member',
+                'schedule.groupFinancialYear.financialYear',
+                'receiver',
+            ]);
+
+        if (! empty($filters['product_id'])) {
+            $query->whereHas(
+                'memberProduct.groupProduct',
+                fn($q) => $q->where('kikoba_product_id', $filters['product_id'])
+            );
+        }
+
+        if (! empty($filters['financial_year_id'])) {
+            $query->whereHas(
+                'schedule.groupFinancialYear',
+                fn($q) => $q->where('kikoba_financial_year_id', $filters['financial_year_id'])
+            );
+        }
+
+        if (! empty($filters['from_date'])) {
+            $query->whereDate('paid_date', '>=', $filters['from_date']);
+        }
+
+        if (! empty($filters['to_date'])) {
+            $query->whereDate('paid_date', '<=', $filters['to_date']);
         }
 
         $contributions = $query->orderByDesc('paid_date')->paginate((int) $request->input('per_page', 20));
@@ -67,7 +131,7 @@ class KikobaContributionController extends BaseController
 
         $memberProduct = KikobaGroupMemberProduct::whereHas(
             'groupMember.group',
-            fn ($q) => $q->where('company_id', $this->getCompanyId())
+            fn($q) => $q->where('company_id', $this->getCompanyId())
         )->find($data['kikoba_group_member_product_id']);
 
         if (! $memberProduct) {
@@ -93,7 +157,7 @@ class KikobaContributionController extends BaseController
     {
         $contribution = KikobaContribution::whereHas(
             'memberProduct.groupMember.group',
-            fn ($q) => $q->where('company_id', $this->getCompanyId())
+            fn($q) => $q->where('company_id', $this->getCompanyId())
         )->with(['memberProduct.groupMember.member', 'schedule', 'receiver'])->find($id);
 
         if (! $contribution) {

@@ -38,6 +38,11 @@ class KikobaProductController extends BaseController
                 'mandatory_contribution' => 'boolean',
                 'submission_unit' => 'required|in:day,week,month',
                 'submission_frequency' => 'required|integer|min:1',
+                // week: 0=Sunday .. 6=Saturday
+                'submission_day_of_week' => 'nullable|required_if:submission_unit,week|integer|between:0,6',
+                // month: pick a fixed date or always the last day of the month
+                'submission_month_option' => 'nullable|required_if:submission_unit,month|in:specific_date,end_of_month',
+                'submission_day_of_month' => 'nullable|required_if:submission_month_option,specific_date|integer|between:1,31',
                 'used_as_income' => 'boolean',
                 'product_type' => 'required|in:share,saving,penalty',
                 'income_calculation' => 'nullable|required_if:used_as_income,true|in:share_value,flat_rate',
@@ -49,6 +54,7 @@ class KikobaProductController extends BaseController
         $data['company_id'] = $this->getCompanyId();
         $data['status'] = 'active';
         $data['min_unit'] = $data['min_unit'] ?? 1;
+        $data = $this->normalizeScheduleSettings($data);
 
         $product = KikobaProduct::create($data);
 
@@ -84,6 +90,9 @@ class KikobaProductController extends BaseController
                 'mandatory_contribution' => 'boolean',
                 'submission_unit' => 'sometimes|required|in:day,week,month',
                 'submission_frequency' => 'sometimes|required|integer|min:1',
+                'submission_day_of_week' => 'nullable|required_if:submission_unit,week|integer|between:0,6',
+                'submission_month_option' => 'nullable|required_if:submission_unit,month|in:specific_date,end_of_month',
+                'submission_day_of_month' => 'nullable|required_if:submission_month_option,specific_date|integer|between:1,31',
                 'used_as_income' => 'boolean',
                 'product_type' => 'sometimes|required|in:share,saving,penalty',
                 'income_calculation' => 'nullable|in:share_value,flat_rate',
@@ -92,6 +101,8 @@ class KikobaProductController extends BaseController
         } catch (ValidationException $e) {
             return $this->validationErrorResponse($e);
         }
+
+        $data = $this->normalizeScheduleSettings($data, $product);
 
         $product->update($data);
 
@@ -113,5 +124,33 @@ class KikobaProductController extends BaseController
         $product->delete();
 
         return $this->successResponse(null, 'Product deleted successfully');
+    }
+
+    /**
+     * Clear schedule-day fields that don't apply to the chosen submission unit,
+     * so a product never carries stale "day of week" data on a monthly product
+     * (or vice versa). Falls back to the existing product values on update.
+     */
+    protected function normalizeScheduleSettings(array $data, ?KikobaProduct $product = null): array
+    {
+        $unit = $data['submission_unit'] ?? $product?->submission_unit;
+
+        if ($unit === 'week') {
+            $data['submission_month_option'] = null;
+            $data['submission_day_of_month'] = null;
+        } elseif ($unit === 'month') {
+            $data['submission_day_of_week'] = null;
+
+            $monthOption = $data['submission_month_option'] ?? $product?->submission_month_option;
+            if ($monthOption === 'end_of_month') {
+                $data['submission_day_of_month'] = null;
+            }
+        } else { // day
+            $data['submission_day_of_week'] = null;
+            $data['submission_month_option'] = null;
+            $data['submission_day_of_month'] = null;
+        }
+
+        return $data;
     }
 }

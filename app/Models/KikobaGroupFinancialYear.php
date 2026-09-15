@@ -12,13 +12,16 @@ class KikobaGroupFinancialYear extends Model
     use HasFactory;
 
     protected $fillable = [
-        'kikoba_group_id', 'kikoba_financial_year_id',
-        'start_date', 'end_date', 'status',
+        'kikoba_group_id',
+        'kikoba_financial_year_id',
+        'start_date',
+        'end_date',
+        'status',
     ];
 
     protected $casts = [
-        'start_date' => 'date',
-        'end_date' => 'date',
+        'start_date' => 'date:Y-m-d',
+        'end_date'   => 'date:Y-m-d',
     ];
 
     public function group(): BelongsTo
@@ -33,6 +36,11 @@ class KikobaGroupFinancialYear extends Model
 
     public function schedules(): HasMany
     {
-        return $this->hasMany(KikobaContributionSchedule::class);
+        return $this->hasMany(KikobaContributionSchedule::class, 'group_financial_year_id');
+    }
+
+    public function closeReports(): HasMany
+    {
+        return $this->hasMany(KikobaFinancialYearCloseReport::class, 'group_financial_year_id');
     }
 }

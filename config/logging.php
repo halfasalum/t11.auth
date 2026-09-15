@@ -56,7 +56,7 @@ return [
             'driver'    => 'daily',
             'path'      => storage_path('logs/loan_payments.log'),
             'level'     => 'debug',
-            'days'      => 90,        // keep 90 days of history
+            'days'      => 30,        // keep 30 days of history
             'formatter' => Monolog\Formatter\JsonFormatter::class,  // one JSON object per line — easy to grep/parse
         ],
 

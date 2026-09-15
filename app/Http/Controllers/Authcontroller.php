@@ -56,6 +56,8 @@ class Authcontroller extends Controller
                 $user->refresh_token_expiry = $refreshTokenExpiry;
                 $user->save();
 
+                $whatsappNotSet = $user->whatsapp_number == null ? true : false;
+
                 // Get roles and permissions
                 $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
                     ->select('role_id')
@@ -161,6 +163,7 @@ class Authcontroller extends Controller
                     'needs_password_change' => $needsPasswordChange,
                     'expires_in' => config('jwt.ttl') * 60,
                     'subscription' => $subscriptionData,
+                    'whatsapp_not_set' => $whatsappNotSet,
                 ]);
             } else {
                 return response()->json([

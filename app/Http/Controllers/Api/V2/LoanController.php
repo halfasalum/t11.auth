@@ -754,8 +754,8 @@ class LoanController extends BaseController
             $tempDate = $start->copy();
             $installmentCount = 0;
             while ($tempDate->lessThan($end)) {
-                $tempDate->addMonths($interval);
                 $installmentCount++;
+                $tempDate = $this->addMonthsPreservingDay($start, $installmentCount * $interval);
             }
         } else {
             $installmentCount = (int) ($loan->loan_period ?? 1);
@@ -784,7 +784,11 @@ class LoanController extends BaseController
             } elseif ($intervalUnit === 'weeks') {
                 $rawDueDate = $currentDate->copy()->addWeeks($interval);
             } else {
-                $rawDueDate = $currentDate->copy()->addMonths($interval);
+                // Anchor on the ORIGINAL start date each time (not the previous
+                // due date) so a start day like 31 snaps back to 31 whenever the
+                // target month allows it, instead of permanently shrinking to 30
+                // the first time it lands on a shorter month.
+                $rawDueDate = $this->addMonthsPreservingDay($start, ($i + 1) * $interval);
             }
 
             // Adjust for weekends AND holidays (previous version only skipped weekends)
@@ -832,6 +836,24 @@ class LoanController extends BaseController
         }
 
         return $installments;
+    }
+
+    /**
+     * Add $months calendar months to $base's month, landing on the same
+     * day-of-month as $base — clamped to the target month's last day when it's
+     * shorter (e.g. 31 Aug + 1 month -> 30 Sep, not 1 Oct; 31 Jan + 1 month ->
+     * 28/29 Feb, not 1/2 Mar).
+     *
+     * Always computed from the fixed $base date rather than chaining off a
+     * previous (possibly already-clamped) due date, so a start day like 31
+     * snaps back to 31 in a later 31-day month instead of getting stuck at 30
+     * forever after the first short month it passes through.
+     */
+    private function addMonthsPreservingDay(Carbon $base, int $months): Carbon
+    {
+        $targetMonth = $base->copy()->startOfDay()->startOfMonth()->addMonthsNoOverflow($months);
+
+        return $targetMonth->day(min($base->day, $targetMonth->daysInMonth));
     }
 
 
@@ -1161,7 +1183,9 @@ class LoanController extends BaseController
                 break;
             case 'months':
             case 'month':
-                $result->addMonths($value);
+                // Clamp to the target month's last day instead of overflowing
+                // into the next month (e.g. 31 Aug + 1 month -> 30 Sep, not 1 Oct).
+                $result->addMonthsNoOverflow($value);
                 break;
             case 'years':
             case 'year':
@@ -1197,8 +1221,8 @@ class LoanController extends BaseController
             $tempDate = $startDate->copy();
             $installments = 0;
             while ($tempDate->lessThan($endDate)) {
-                $tempDate->addMonths($paymentInterval);
                 $installments++;
+                $tempDate = $this->addMonthsPreservingDay($startDate, $installments * $paymentInterval);
             }
             return max(1, $installments);
         }
@@ -1259,8 +1283,10 @@ class LoanController extends BaseController
                 'day_name' => $dueDate->format('l')
             ];
 
-            // Set current date for next iteration
-            $currentDate = $dueDate->copy();
+            // Anchor next iteration off the RAW date, not the weekend/holiday
+            // adjusted one, so a shift from one due date doesn't permanently
+            // drag every later installment along with it.
+            $currentDate = $rawDueDate->copy();
         }
 
         return $installments;
@@ -1285,14 +1311,19 @@ class LoanController extends BaseController
         $currentDate = $startDate->copy();
         $remainingDifference = $difference;
         $interestMode = $product->interest_mode ?? 2; // default to percentage mode if unset
+        $isMonthly = in_array($paymentIntervalUnit, ['months', 'month'], true);
 
         for ($i = 0; $i < $totalInstallments; $i++) {
-            // Move to next payment date
-            $dueDate = $this->addUnit($currentDate, $paymentIntervalUnit, $paymentInterval);
+            // Move to next payment date. Months are anchored on the ORIGINAL
+            // start date (not chained off the previous iteration) so a start
+            // day like 31 snaps back to 31 whenever the target month allows it.
+            $rawDueDate = $isMonthly
+                ? $this->addMonthsPreservingDay($startDate, ($i + 1) * $paymentInterval)
+                : $this->addUnit($currentDate, $paymentIntervalUnit, $paymentInterval);
 
             // Skip weekends and holidays
             $dueDate = $this->adjustForWeekendsAndHolidays(
-                $dueDate,
+                $rawDueDate,
                 $skipSaturday,
                 $skipSunday,
                 $holidays
@@ -1327,8 +1358,10 @@ class LoanController extends BaseController
                 'day_name' => $dueDate->format('l')
             ];
 
-            // Set current date for next iteration
-            $currentDate = $dueDate->copy();
+            // Anchor next iteration off the RAW date, not the weekend/holiday
+            // adjusted one, so a shift from one due date doesn't permanently
+            // drag every later installment along with it.
+            $currentDate = $rawDueDate->copy();
         }
 
         return $installments;
@@ -2448,6 +2481,28 @@ class LoanController extends BaseController
         } catch (\Exception $e) {
             Log::error('Failed to get schedule template: ' . $e->getMessage());
             return $this->errorResponse('Failed to get schedule template: ' . $e->getMessage(), 500);
+        }
+    }
+
+    public function loanToken()
+    {
+        try {
+
+            $token = LoanToken::where('loan_sms_token.status', 1)
+                ->join('customers', 'customers.id', '=', 'loan_sms_token.loan_customer')
+                ->join('users', 'users.id', '=', 'loan_sms_token.user')
+                ->where('users.user_company', $this->getCompanyId())
+                ->select('loan_token', 'users.name', 'customers.fullname')
+                ->get();
+
+
+
+            return $this->successResponse([
+                'data' => $token,
+            ], 'Token retrieved successfully');
+        } catch (\Exception $e) {
+            Log::error('Failed to get token: ' . $e->getMessage());
+            return $this->errorResponse('Failed to get token: ' . $e->getMessage(), 500);
         }
     }
 }

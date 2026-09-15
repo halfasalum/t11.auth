@@ -728,7 +728,7 @@ class CustomerController extends Controller
             'income' => 'required|numeric',
             'dob' => 'required|date|date_format:Y-m-d|before:today',
             'zone' => 'required|exists:zones,id',
-            'customer_image' => 'required|image|mimes:jpg,png,jpeg|max:2048',
+            'customer_image' => 'required|image|mimes:jpg,png,jpeg|max:10240',
         ]);
     }
 

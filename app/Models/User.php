@@ -52,7 +52,8 @@ class User extends Authenticatable implements JWTSubject
         'refresh_token_expiry',
         'password_changed_at',
         'password_expiry_date',
-        'last_login_at'
+        'last_login_at',
+        'whatsapp_number'
     ];
 
     /**

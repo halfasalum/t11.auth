@@ -648,7 +648,7 @@ class WhatsAppController extends Controller
     /**
      * Send Notification to Admin
      */
-    private function notifyAdmin(string $message): void
+    public function notifyAdmin(string $message): void
     {
         $adminPhone = config('services.whatsapp.admin_phone'); // From .env
 
@@ -679,6 +679,119 @@ class WhatsAppController extends Controller
             }
         } catch (\Exception $e) {
             Log::error("Admin notification error: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Send message to any WhatsApp number
+     */
+    public function sendToOther(string $message, string $phone): bool
+    {
+        $phone = ltrim($phone, '+');
+        $phone = preg_replace('/[^0-9]/', '', $phone);
+
+        Log::info("sendToOther Attempt", [
+            'to' => $phone,
+            'message_length' => strlen($message)
+        ]);
+
+        if (empty($phone) || strlen($phone) < 9) {
+            Log::error("Invalid phone number", ['phone' => $phone]);
+            return false;
+        }
+
+        try {
+            $payload = [
+                'messaging_product' => 'whatsapp',
+                'recipient_type'    => 'individual',
+                'to'                => $phone,
+                'type'              => 'text',
+                'text'              => ['body' => $message]
+            ];
+
+            $response = Http::withOptions([
+                'verify' => false
+            ])->withToken($this->token)
+                ->post($this->apiUrl, $payload);
+
+            $responseData = $response->json();
+
+            Log::info("WhatsApp sendToOther Response", [
+                'status' => $response->status(),
+                'success' => $response->successful(),
+                'response' => $responseData
+            ]);
+
+            if ($response->successful()) {
+                Log::info("✅ Message sent successfully to {$phone}");
+                return true;
+            } else {
+                Log::error("❌ Failed to send WhatsApp message", [
+                    'phone' => $phone,
+                    'status' => $response->status(),
+                    'error' => $responseData
+                ]);
+                return false;
+            }
+        } catch (\Exception $e) {
+            Log::error("Exception in sendToOther", [
+                'phone' => $phone,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * Send WhatsApp Template Message (Recommended for automated reports)
+     */
+    public function sendTemplate(string $to, string $templateName, array $parameters): bool
+    {
+        $to = ltrim($to, '+');
+        $to = preg_replace('/[^0-9]/', '', $to);
+
+        $components = [
+            [
+                'type' => 'body',
+                'parameters' => []
+            ]
+        ];
+
+        foreach ($parameters as $value) {
+            $components[0]['parameters'][] = [
+                'type' => 'text',
+                'text' => (string) $value
+            ];
+        }
+
+        try {
+            $payload = [
+                'messaging_product' => 'whatsapp',
+                'recipient_type'    => 'individual',
+                'to'                => $to,
+                'type'              => 'template',
+                'template'          => [
+                    'name'     => $templateName,
+                    'language' => ['code' => 'sw'],   // or 'en'
+                    'components' => $components
+                ]
+            ];
+
+            $response = Http::withOptions(['verify' => false])
+                ->withToken($this->token)
+                ->post($this->apiUrl, $payload);
+
+            if ($response->successful()) {
+                Log::info("Template '{$templateName}' sent to {$to}");
+                return true;
+            } else {
+                Log::error("Template failed", $response->json());
+                return false;
+            }
+        } catch (\Exception $e) {
+            Log::error("sendTemplate Exception: " . $e->getMessage());
+            return false;
         }
     }
 }

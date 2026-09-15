@@ -23,3 +23,4 @@ Schedule::command('backup:database-email --compress')
     ->runInBackground();
 
 Schedule::command('payments:process')->everyMinute()->runInBackground();
+Schedule::command('app:daily-report')->dailyAt('08:00')->appendOutputTo(storage_path('logs/daily-report.log'))->runInBackground();

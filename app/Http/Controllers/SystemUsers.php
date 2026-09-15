@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\users_roles;
 use App\Models\ZoneUser;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -19,7 +20,7 @@ class SystemUsers extends Controller
         $user = JWTAuth::parseToken()->getPayload();
         $user_company = $user->get('company');
         $users = User::where(['user_company' => $user_company])
-            ->select('id', 'name', 'email', 'first_name', 'last_name', 'status', 'created_at', 'phone','user_phone')
+            ->select('id', 'name', 'email', 'first_name', 'last_name', 'status', 'created_at', 'phone', 'user_phone')
             ->where("status", '!=', 3)
             ->get();
         return response()->json(
@@ -101,7 +102,7 @@ class SystemUsers extends Controller
                 'first_name' => 'bail|required|string|max:255',
                 'middle_name' => 'nullable|string|max:255',
                 'last_name' => 'required|string|max:255',
-                'phone' => 'required|numeric|starts_with:06,07|digits:10|unique:App\Models\User,user_phone',                
+                'phone' => 'required|numeric|starts_with:06,07|digits:10|unique:App\Models\User,user_phone',
                 'email' => 'nullable|email|unique:App\Models\User,email',
             ]);
             $username = strtolower($request->first_name . '.' . $request->last_name);
@@ -134,10 +135,10 @@ class SystemUsers extends Controller
                     users_roles::create($data);
                 }
             }
-            
+
             $branches = $request->branches;
-            if(sizeof($branches) > 0){
-                foreach($branches as $branch){
+            if (sizeof($branches) > 0) {
+                foreach ($branches as $branch) {
                     $data = [
                         'branch_id' => $branch,
                         'user_id'   => $user_id
@@ -145,13 +146,13 @@ class SystemUsers extends Controller
                     BranchUser::create($data);
                 }
                 $zones = [];
-            }else{
+            } else {
                 $zones = $request->zones;
             }
 
             //$zones = $request->zones;
-            if(sizeof($zones) > 0){
-                foreach($zones as $zone){
+            if (sizeof($zones) > 0) {
+                foreach ($zones as $zone) {
                     $data = [
                         'user_id' => $user_id,
                         'zone_id'   => $zone
@@ -159,9 +160,9 @@ class SystemUsers extends Controller
                     ZoneUser::create($data);
                 }
             }
-            
+
             $notification = new Notifications();
-            $message = "Habari, Username yako ni : ".$name. " na password ni : ". $password;
+            $message = "Habari, Username yako ni : " . $name . " na password ni : " . $password;
             $notification->sendSMS($phone, $message);
             return response()->json([
                 'status' => 'success',
@@ -175,17 +176,18 @@ class SystemUsers extends Controller
         }
     }
 
-    public function userAllocation($user_id = null){
+    public function userAllocation($user_id = null)
+    {
         $branches   = [];
         $zones      = [];
-        $branches = BranchUser::where(["user_id"=>$user_id, "status"=>1])
-        ->select("branch_id")
-        ->get();
+        $branches = BranchUser::where(["user_id" => $user_id, "status" => 1])
+            ->select("branch_id")
+            ->get();
         //$branches = $branches->pluck('branch_id');
-        $zones = ZoneUser::where(["user_id"=>$user_id, "status"=>1])
-        ->select("zone_id")
-        ->get();
-        return ['branches'=>$branches, 'zones'=>$zones];
+        $zones = ZoneUser::where(["user_id" => $user_id, "status" => 1])
+            ->select("zone_id")
+            ->get();
+        return ['branches' => $branches, 'zones' => $zones];
     }
 
     public function updateUserAllocations(Request $request)
@@ -234,14 +236,15 @@ class SystemUsers extends Controller
         }
     }
 
-    public function getUserDetails($userId){
+    public function getUserDetails($userId)
+    {
         $user = User::where('id', $userId)
             ->select('id', 'name', 'email', 'first_name', 'middle_name', 'last_name', 'status', 'created_at', 'user_phone')
             ->first();
         if (!$user) {
             return response()->json(['message' => 'User not found'], 404);
         }
-       
+
         return response()->json(
             $user
         );
@@ -302,6 +305,32 @@ class SystemUsers extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'User details updated successfully',
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    public function updateWhatsappNumber(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'whatsapp_number' => 'required|numeric|starts_with:06,07|digits:10',
+            ]);
+            $userId = Auth::id();
+            $user = User::find($userId);
+            if (!$user) {
+                return response()->json(['message' => 'User not found'], 404);
+            }
+            $phone = '255' . substr($request->whatsapp_number, 1);
+            $user->whatsapp_number = $phone;
+            $user->save();
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Whatsapp number updated successfully',
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([

@@ -12,15 +12,20 @@ class KikobaContributionSchedule extends Model
     use HasFactory;
 
     protected $fillable = [
-        'group_member_product_id', 'kikoba_group_financial_year_id',
-        'sequence', 'due_date', 'expected_amount', 'paid_amount',
-        'status', 'penalty_applied',
+        'group_member_product_id',
+        'group_financial_year_id',
+        'sequence',
+        'due_date',
+        'expected_amount',
+        'paid_amount',
+        'status',
+        'penalty_applied',
     ];
 
     protected $casts = [
-        'due_date' => 'date',
-        'expected_amount' => 'decimal:2',
-        'paid_amount' => 'decimal:2',
+        'due_date' => 'date:Y-m-d',
+        'expected_amount' => 'float',
+        'paid_amount' => 'float',
         'penalty_applied' => 'boolean',
     ];
 
@@ -31,7 +36,31 @@ class KikobaContributionSchedule extends Model
 
     public function groupFinancialYear(): BelongsTo
     {
-        return $this->belongsTo(KikobaGroupFinancialYear::class, 'kikoba_group_financial_year_id');
+        return $this->belongsTo(KikobaGroupFinancialYear::class, 'group_financial_year_id');
+    }
+
+
+
+    public function groupMember()
+    {
+        return $this->hasOneThrough(
+            KikobaGroupMember::class,
+            KikobaGroupMemberProduct::class,
+            'group_member_product_id',
+            'kikoba_group_member_id'
+        );
+    }
+
+    public function member()
+    {
+        return $this->hasOneThrough(
+            KikobaMember::class,
+            KikobaGroupMember::class,
+            'group_member_product_id',   // on Schedule
+            'kikoba_group_member_id',    // on GroupMemberProduct
+            'id',                        // on Schedule
+            'kikoba_member_id'           // on GroupMember
+        );
     }
 
     public function contributions(): HasMany

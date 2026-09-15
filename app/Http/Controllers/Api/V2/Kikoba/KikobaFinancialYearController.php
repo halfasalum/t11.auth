@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V2\Kikoba;
 use App\Http\Controllers\Api\V2\BaseController;
 use App\Models\KikobaFinancialYear;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class KikobaFinancialYearController extends BaseController
@@ -27,21 +29,43 @@ class KikobaFinancialYearController extends BaseController
     {
         try {
             $data = $request->validate([
-                'name' => 'required|string|max:100',
+                'name'       => [
+                    'required',
+                    'string',
+                    'max:100',
+                    Rule::unique('kikoba_financial_years', 'name')->where('company_id', $this->getCompanyId())->whereNull('deleted_at')
+                ],
                 'start_date' => 'required|date',
-                'end_date' => 'required|date|after:start_date',
+                'end_date'   => 'required|date|after:start_date',
             ]);
         } catch (ValidationException $e) {
             return $this->validationErrorResponse($e);
         }
 
-        $data['company_id'] = $this->getCompanyId();
-        $data['status'] = 'upcoming';
-        $data['is_current'] = false;
+        $companyId = $this->getCompanyId();
+        $today     = now()->startOfDay();   // Today's date without time
+
+        // Deactivate all previous financial years for this company
+        KikobaFinancialYear::where('company_id', $companyId)
+            ->update(['is_current' => false]);
+
+        // Determine if this new year should be current
+        $isCurrent = $today->between(
+            Carbon::parse($data['start_date'])->startOfDay(),
+            Carbon::parse($data['end_date'])->endOfDay()
+        );
+
+        $data['company_id'] = $companyId;
+        $data['status']     = 'upcoming';
+        $data['is_current'] = 0;
 
         $year = KikobaFinancialYear::create($data);
 
-        return $this->successResponse($year, 'Financial year created successfully', 201);
+        return $this->successResponse(
+            $year,
+            'Financial year created successfully',
+            201
+        );
     }
 
     public function show(int $id)

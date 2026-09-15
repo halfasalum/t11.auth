@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V2\CompanyRegistrationController;
 use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaContributionController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaDashboardController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaFinancialYearController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberProductController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaMemberController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaPenaltyController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaProductController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaReportController;
 use App\Http\Controllers\Api\V2\LoanController;
 use App\Http\Controllers\Api\V2\LoanPaymentsController;
 use App\Http\Controllers\Api\V2\LoansProductsController;
@@ -29,6 +31,7 @@ use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
 use App\Http\Controllers\Api\V2\SqlQueryController;
 use App\Http\Controllers\Api\V2\SubscriptionController;
+use App\Http\Controllers\Api\V2\UserActivityLogController;
 use App\Http\Controllers\Api\V2\WhatsAppController;
 use App\Http\Controllers\Authcontroller;
 use App\Http\Controllers\BankController;
@@ -92,6 +95,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     // routes/api.php
 
     // routes/api.php - Add these routes
+
+    Route::post('/user/updateWhatsapp', [SystemUsers::class, 'updateWhatsappNumber']);
 
     Route::prefix('reports')->group(function () {
 
@@ -201,6 +206,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('/overdue', [LoanController::class, 'overdue'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::get('/defaulted', [LoanController::class, 'defaulted'])->middleware(ControlAccessMiddleware::class . ':7');
         Route::post('/calculate-schedule', [LoanController::class, 'calculateLoanSchedule']);
+        Route::get('/token', [LoanController::class, 'loanToken']);
 
 
         // Modular payment endpoints
@@ -360,6 +366,11 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::post("/role/update", [Roles::class, "updateRolePermission"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::get("/role/permissions/{id}", [Roles::class, "getRolePermissons"])->middleware([ControlAccessMiddleware::class . ':14']);
     Route::get('/users', [SystemUsers::class, 'list'])->middleware([ControlAccessMiddleware::class . ':10']);
+
+    // User activity / audit logs (company-scoped)
+    Route::get('/activity-logs', [UserActivityLogController::class, 'index'])->middleware([ControlAccessMiddleware::class . ':10']);
+    Route::get('/activity-logs/user/{userId}', [UserActivityLogController::class, 'forUser'])->middleware([ControlAccessMiddleware::class . ':10']);
+
     Route::get("/user/details/{id}", [SystemUsers::class, "getUserDetails"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::get("/user/allocations/{id}", [SystemUsers::class, "userAllocation"])->middleware([ControlAccessMiddleware::class . ':15']);
     Route::get("/roles/user/{id}", [Roles::class, "getUserAssignedRoles"])->middleware([ControlAccessMiddleware::class . ':15']);
@@ -432,12 +443,23 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
 
     Route::prefix('kikoba')->group(function () {
 
+        // Analytical dashboard (company-wide, optional ?group_id=)
+        Route::get('dashboard', [KikobaDashboardController::class, 'index']);
+
         // Members registry
         Route::get('members', [KikobaMemberController::class, 'index']);
         Route::post('members', [KikobaMemberController::class, 'store']);
+
+        // Import members from the company's loan-module customers (must be
+        // declared before members/{id} so "import" isn't swallowed as an id)
+        Route::get('members/import/customers', [KikobaMemberController::class, 'importableCustomers']);
+        Route::post('members/import', [KikobaMemberController::class, 'importFromCustomers']);
+
         Route::get('members/{id}', [KikobaMemberController::class, 'show']);
         Route::put('members/{id}', [KikobaMemberController::class, 'update']);
         Route::delete('members/{id}', [KikobaMemberController::class, 'destroy']);
+
+        Route::get('members/{memberId}/contributions', [KikobaContributionController::class, 'forMember']);
 
         // Financial years (company-wide)
         Route::get('financial-years', [KikobaFinancialYearController::class, 'index']);
@@ -446,6 +468,10 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::put('financial-years/{id}', [KikobaFinancialYearController::class, 'update']);
         Route::delete('financial-years/{id}', [KikobaFinancialYearController::class, 'destroy']);
         Route::post('financial-years/{id}/activate', [KikobaFinancialYearController::class, 'activate']);
+
+
+
+
 
         // Product catalogue (company-wide)
         Route::get('products', [KikobaProductController::class, 'index']);
@@ -474,6 +500,17 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('groups/{groupId}/financial-years', [KikobaGroupController::class, 'startFinancialYear']);
         Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close', [KikobaGroupController::class, 'closeFinancialYear']);
 
+
+        // Product-year summaries (per member, per product, for this cycle)
+        Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/product-summary', [KikobaReportController::class, 'generateProductSummary']);
+        Route::get('groups/{groupId}/financial-years/{groupFinancialYearId}/product-summary', [KikobaReportController::class, 'productSummary']);
+
+        // Financial-year close report (savings + profit payout per member)
+        Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report', [KikobaReportController::class, 'generateCloseReport']);
+        Route::get('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report', [KikobaReportController::class, 'closeReport']);
+        Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/finalize', [KikobaReportController::class, 'finalizeCloseReport']);
+
+
         // Group members
         Route::get('groups/{groupId}/members', [KikobaGroupMemberController::class, 'index']);
         Route::post('groups/{groupId}/members', [KikobaGroupMemberController::class, 'store']);
@@ -488,6 +525,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('groups/{groupId}/financial-years/available', [KikobaGroupController::class, 'getAvailableFinancialYears']);
         Route::get('groups/{groupId}/financial-years/allocated', [KikobaGroupController::class, 'getAllocatedFinancialYears']);
         Route::post('groups/{groupId}/financial-years/allocate', [KikobaGroupController::class, 'allocateFinancialYear']);
+        Route::get('groups/{groupId}/unfilled-payments', [KikobaGroupController::class, 'groupUnfilledPayments']);
 
         // Contribution schedules (read-only — what's due for a given enrollment)
         Route::get('groups/{groupId}/members/{groupMemberId}/products/{memberProductId}/schedules', [KikobaGroupMemberProductController::class, 'schedules']);
@@ -502,5 +540,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('penalties/{id}/waive', [KikobaPenaltyController::class, 'waive']);
         Route::post('penalties/{id}/mark-paid', [KikobaPenaltyController::class, 'markPaid']);
         Route::post('penalties/run-detection', [KikobaPenaltyController::class, 'runDetection']);
+        Route::post('payments/process-schedules', [KikobaGroupController::class, 'processGroupSchedulePayments']);
+        Route::post('payments/filling/{financialYearId}', [KikobaGroupController::class, 'getGroupUnfilledPaymentsByDate']);
     });
 });
