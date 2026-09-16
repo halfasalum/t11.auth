@@ -489,12 +489,16 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::put('loan-products/{id}', [KikobaLoanProductController::class, 'update']);
         Route::delete('loan-products/{id}', [KikobaLoanProductController::class, 'destroy']);
 
-        // Kikoba loan applications (phase 2 — application only, no approval yet)
+        // Kikoba loan applications + approval (schedule generation happens on approve)
         Route::get('loans/eligibility', [KikobaLoanController::class, 'eligibility']);
         Route::get('loans', [KikobaLoanController::class, 'index']);
         Route::post('loans', [KikobaLoanController::class, 'store']);
         Route::get('loans/{id}', [KikobaLoanController::class, 'show']);
+        Route::get('loans/{id}/schedule', [KikobaLoanController::class, 'schedule']);
         Route::post('loans/{id}/cancel', [KikobaLoanController::class, 'cancel']);
+        Route::post('loans/{id}/preview-schedule', [KikobaLoanController::class, 'previewSchedule']);
+        Route::post('loans/{id}/approve', [KikobaLoanController::class, 'approve']);
+        Route::post('loans/{id}/reject', [KikobaLoanController::class, 'reject']);
 
         // Groups
         Route::get('groups', [KikobaGroupController::class, 'index']);

@@ -7,6 +7,9 @@ use App\Models\KikobaGroup;
 use App\Models\KikobaGroupMember;
 use App\Models\KikobaLoan;
 use App\Models\KikobaLoanProduct;
+use App\Models\KikobaLoanSchedule;
+use App\Services\Kikoba\KikobaLoanScheduleService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -14,15 +17,16 @@ use Illuminate\Validation\ValidationException;
 
 /**
  * Phase 2 of Kikoba Loans: applying for a loan against a member's paid share
- * value in a specific group. Approval/disbursement/repayment schedule are a
- * later phase — every application here just lands as "pending".
+ * value in a specific group, plus the single-step approve/reject decision
+ * that (on approval) generates the repayment schedule immediately. No
+ * disbursement/fund-ledger accounting yet — that's a later phase.
  */
 class KikobaLoanController extends BaseController
 {
     public function index(Request $request)
     {
         $query = KikobaLoan::where('company_id', $this->getCompanyId())
-            ->with(['group', 'groupMember.member', 'loanProduct', 'applicant:id,name,first_name,last_name']);
+            ->with(['group', 'groupMember.member', 'loanProduct', 'schedules', 'applicant:id,name,first_name,last_name']);
 
         if ($request->filled('kikoba_group_id')) {
             $query->where('kikoba_group_id', $request->integer('kikoba_group_id'));
@@ -239,7 +243,12 @@ class KikobaLoanController extends BaseController
     public function show(int $id)
     {
         $loan = KikobaLoan::where('company_id', $this->getCompanyId())
-            ->with(['group', 'groupMember.member', 'loanProduct', 'applicant:id,name,first_name,last_name'])
+            ->with([
+                'group', 'groupMember.member', 'loanProduct', 'schedules',
+                'applicant:id,name,first_name,last_name',
+                'approver:id,name,first_name,last_name',
+                'rejecter:id,name,first_name,last_name',
+            ])
             ->find($id);
 
         if (! $loan) {
@@ -247,6 +256,17 @@ class KikobaLoanController extends BaseController
         }
 
         return $this->successResponse($loan);
+    }
+
+    public function schedule(int $id)
+    {
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())->find($id);
+
+        if (! $loan) {
+            return $this->errorResponse('Loan application not found', 404);
+        }
+
+        return $this->successResponse($loan->schedules()->get());
     }
 
     public function cancel(int $id)
@@ -264,6 +284,161 @@ class KikobaLoanController extends BaseController
         $loan->update(['status' => 'cancelled']);
 
         return $this->successResponse($loan, 'Loan application cancelled');
+    }
+
+    /**
+     * Recompute the schedule a pending application WOULD get, for a given
+     * amount/start date, without saving anything — lets the approver preview
+     * it while still choosing those values.
+     */
+    public function previewSchedule(Request $request, int $id, KikobaLoanScheduleService $scheduleService)
+    {
+        try {
+            $data = $request->validate([
+                'approved_amount' => 'nullable|numeric|min:0.01',
+                'start_date' => 'required|date|date_format:Y-m-d',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())
+            ->where('status', 'pending')
+            ->with('loanProduct')
+            ->find($id);
+
+        if (! $loan) {
+            return $this->errorResponse('Loan application not found or not pending', 404);
+        }
+
+        [$approvedAmount, $error] = $this->resolveApprovedAmount($loan, $data['approved_amount'] ?? null);
+        if ($error) {
+            return $this->errorResponse($error, 422);
+        }
+
+        $startDate = Carbon::parse($data['start_date'])->startOfDay();
+        $installments = $scheduleService->generate($loan->loanProduct, $approvedAmount, $loan->loan_period, $startDate);
+
+        return $this->successResponse($installments);
+    }
+
+    /**
+     * Single-step approval: accepting a pending application immediately
+     * generates its repayment schedule and activates it. The approver may
+     * lower the amount (never above the eligible ceiling captured at
+     * application time) and must supply the disbursement start date the
+     * schedule is built from.
+     */
+    public function approve(Request $request, int $id, KikobaLoanScheduleService $scheduleService)
+    {
+        try {
+            $data = $request->validate([
+                'approved_amount' => 'nullable|numeric|min:0.01',
+                'start_date' => 'required|date|date_format:Y-m-d',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())
+            ->where('status', 'pending')
+            ->with('loanProduct')
+            ->find($id);
+
+        if (! $loan) {
+            return $this->errorResponse('Loan application not found or not pending', 404);
+        }
+
+        $product = $loan->loanProduct;
+
+        [$approvedAmount, $error] = $this->resolveApprovedAmount($loan, $data['approved_amount'] ?? null);
+        if ($error) {
+            return $this->errorResponse($error, 422);
+        }
+
+        $startDate = Carbon::parse($data['start_date'])->startOfDay();
+        $installments = $scheduleService->generate($product, $approvedAmount, $loan->loan_period, $startDate);
+
+        DB::transaction(function () use ($loan, $installments, $approvedAmount, $startDate) {
+            foreach ($installments as $i => $inst) {
+                KikobaLoanSchedule::create([
+                    'kikoba_loan_id' => $loan->id,
+                    'installment_no' => $i + 1,
+                    'due_date' => $inst['due_date'],
+                    'principal_amount' => $inst['principal'],
+                    'interest_amount' => $inst['interest'],
+                    'total_amount' => $inst['total'],
+                ]);
+            }
+
+            $loan->update([
+                'approved_amount' => $approvedAmount,
+                'start_date' => $startDate->toDateString(),
+                'status' => 'active',
+                'approved_by' => $this->getUserId(),
+                'approved_at' => now(),
+            ]);
+        });
+
+        return $this->successResponse(
+            $loan->fresh()->load(['group', 'groupMember.member', 'loanProduct', 'schedules']),
+            'Loan application approved and schedule generated'
+        );
+    }
+
+    public function reject(Request $request, int $id)
+    {
+        try {
+            $data = $request->validate([
+                'rejection_reason' => 'required|string|max:500',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())
+            ->where('status', 'pending')
+            ->find($id);
+
+        if (! $loan) {
+            return $this->errorResponse('Loan application not found or not pending', 404);
+        }
+
+        $loan->update([
+            'status' => 'rejected',
+            'rejected_by' => $this->getUserId(),
+            'rejected_at' => now(),
+            'rejection_reason' => $data['rejection_reason'],
+        ]);
+
+        return $this->successResponse($loan, 'Loan application rejected');
+    }
+
+    /**
+     * Shared by approve() and previewSchedule(): resolves the requested
+     * approved amount (or defaults to requested_amount) and checks it against
+     * the application's eligible ceiling and the product's minimum.
+     *
+     * @return array{0: float|null, 1: string|null} [amount, errorMessage]
+     */
+    private function resolveApprovedAmount(KikobaLoan $loan, ?float $requestedApprovedAmount): array
+    {
+        $product = $loan->loanProduct;
+        $approvedAmount = $requestedApprovedAmount !== null
+            ? round($requestedApprovedAmount, 2)
+            : (float) $loan->requested_amount;
+
+        if ($approvedAmount > (float) $loan->eligible_amount) {
+            return [null, 'Approved amount (' . number_format($approvedAmount, 2) .
+                ') cannot exceed this application\'s eligible amount (' . number_format((float) $loan->eligible_amount, 2) . ')'];
+        }
+
+        if ($approvedAmount < (float) $product->min_loan_amount) {
+            return [null, 'Approved amount (' . number_format($approvedAmount, 2) .
+                ') is below this product\'s minimum loan amount (' . number_format((float) $product->min_loan_amount, 2) . ')'];
+        }
+
+        return [$approvedAmount, null];
     }
 
     /**
