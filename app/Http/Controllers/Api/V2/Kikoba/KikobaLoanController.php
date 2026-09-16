@@ -112,8 +112,12 @@ class KikobaLoanController extends BaseController
                 'kikoba_group_member_id' => 'required|integer|exists:kikoba_group_members,id',
                 'kikoba_loan_product_id' => 'required|integer|exists:kikoba_loan_products,id',
                 'multiplier' => 'required|numeric|min:0.01',
+                // Optional: request less than the full eligible ceiling. Omit to
+                // borrow the full amount that multiplier works out to.
+                'requested_amount' => 'nullable|numeric|min:0.01',
                 'loan_period' => 'required|integer|min:1',
                 'purpose' => 'nullable|string',
+                'document' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
             ]);
         } catch (ValidationException $e) {
             return $this->validationErrorResponse($e);
@@ -168,14 +172,44 @@ class KikobaLoanController extends BaseController
         }
 
         $shareValue = $this->shareValueFor($groupMember->id);
-        $requestedAmount = $product->eligibleAmountFor($shareValue, $multiplier);
+        $eligibleAmount = $product->eligibleAmountFor($shareValue, $multiplier);
 
-        if ($requestedAmount < (float) $product->min_loan_amount) {
+        if ($eligibleAmount < (float) $product->min_loan_amount) {
             return $this->errorResponse(
-                'This member\'s share value at ' . $multiplier . 'x (' . number_format($requestedAmount, 2) .
+                'This member\'s share value at ' . $multiplier . 'x (' . number_format($eligibleAmount, 2) .
                     ') is below this product\'s minimum loan amount (' . number_format((float) $product->min_loan_amount, 2) . ')',
                 422
             );
+        }
+
+        // The applicant may ask for less than the full eligible ceiling, but
+        // never more — that ceiling is the hard threshold for this multiplier.
+        $requestedAmount = isset($data['requested_amount'])
+            ? round((float) $data['requested_amount'], 2)
+            : $eligibleAmount;
+
+        if ($requestedAmount > $eligibleAmount) {
+            return $this->errorResponse(
+                'Requested amount (' . number_format($requestedAmount, 2) .
+                    ') cannot exceed the eligible amount for this multiplier (' . number_format($eligibleAmount, 2) . ')',
+                422
+            );
+        }
+
+        if ($requestedAmount < (float) $product->min_loan_amount) {
+            return $this->errorResponse(
+                'Requested amount (' . number_format($requestedAmount, 2) .
+                    ') is below this product\'s minimum loan amount (' . number_format((float) $product->min_loan_amount, 2) . ')',
+                422
+            );
+        }
+
+        $documentPath = null;
+        if ($request->hasFile('document')) {
+            $file = $request->file('document');
+            $filename = 'KLD-' . now()->format('ymdHis') . '-' . Str::upper(Str::random(6)) . '.' . $file->getClientOriginalExtension();
+            $file->storeAs('kikoba-loans', $filename, 'public');
+            $documentPath = 'storage/kikoba-loans/' . $filename;
         }
 
         $loan = KikobaLoan::create([
@@ -186,9 +220,11 @@ class KikobaLoanController extends BaseController
             'loan_number' => $this->generateLoanNumber(),
             'share_value_at_application' => $shareValue,
             'multiplier' => $multiplier,
+            'eligible_amount' => $eligibleAmount,
             'requested_amount' => $requestedAmount,
             'loan_period' => $data['loan_period'],
             'purpose' => $data['purpose'] ?? null,
+            'document_path' => $documentPath,
             'status' => 'pending',
             'applied_by' => $this->getUserId(),
         ]);

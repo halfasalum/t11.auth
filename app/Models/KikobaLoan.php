@@ -12,13 +12,14 @@ class KikobaLoan extends Model
 
     protected $fillable = [
         'company_id', 'kikoba_group_id', 'kikoba_group_member_id', 'kikoba_loan_product_id',
-        'loan_number', 'share_value_at_application', 'multiplier', 'requested_amount',
-        'loan_period', 'purpose', 'notes', 'status', 'applied_by',
+        'loan_number', 'share_value_at_application', 'multiplier', 'eligible_amount', 'requested_amount',
+        'loan_period', 'purpose', 'document_path', 'notes', 'status', 'applied_by',
     ];
 
     protected $casts = [
         'share_value_at_application' => 'decimal:2',
         'multiplier' => 'decimal:2',
+        'eligible_amount' => 'decimal:2',
         'requested_amount' => 'decimal:2',
         'loan_period' => 'integer',
     ];
