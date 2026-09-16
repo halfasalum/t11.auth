@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V2\Kikoba\KikobaFinancialYearController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberProductController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaLoanController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaLoanProductController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaMemberController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaPenaltyController;
@@ -487,6 +488,13 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('loan-products/{id}', [KikobaLoanProductController::class, 'show']);
         Route::put('loan-products/{id}', [KikobaLoanProductController::class, 'update']);
         Route::delete('loan-products/{id}', [KikobaLoanProductController::class, 'destroy']);
+
+        // Kikoba loan applications (phase 2 — application only, no approval yet)
+        Route::get('loans/eligibility', [KikobaLoanController::class, 'eligibility']);
+        Route::get('loans', [KikobaLoanController::class, 'index']);
+        Route::post('loans', [KikobaLoanController::class, 'store']);
+        Route::get('loans/{id}', [KikobaLoanController::class, 'show']);
+        Route::post('loans/{id}/cancel', [KikobaLoanController::class, 'cancel']);
 
         // Groups
         Route::get('groups', [KikobaGroupController::class, 'index']);
