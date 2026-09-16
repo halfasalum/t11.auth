@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V2\Kikoba\KikobaFinancialYearController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaGroupMemberProductController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaLoanProductController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaMemberController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaPenaltyController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaProductController;
@@ -479,6 +480,13 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('products/{id}', [KikobaProductController::class, 'show']);
         Route::put('products/{id}', [KikobaProductController::class, 'update']);
         Route::delete('products/{id}', [KikobaProductController::class, 'destroy']);
+
+        // Loan product catalogue (company-wide) — share-based Kikoba loans
+        Route::get('loan-products', [KikobaLoanProductController::class, 'index']);
+        Route::post('loan-products', [KikobaLoanProductController::class, 'store']);
+        Route::get('loan-products/{id}', [KikobaLoanProductController::class, 'show']);
+        Route::put('loan-products/{id}', [KikobaLoanProductController::class, 'update']);
+        Route::delete('loan-products/{id}', [KikobaLoanProductController::class, 'destroy']);
 
         // Groups
         Route::get('groups', [KikobaGroupController::class, 'index']);
