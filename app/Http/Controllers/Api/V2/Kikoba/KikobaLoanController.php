@@ -9,6 +9,7 @@ use App\Models\KikobaLoan;
 use App\Models\KikobaLoanProduct;
 use App\Models\KikobaLoanSchedule;
 use App\Services\Kikoba\KikobaAccountService;
+use App\Services\Kikoba\KikobaLoanRepaymentService;
 use App\Services\Kikoba\KikobaLoanScheduleService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -246,11 +247,12 @@ class KikobaLoanController extends BaseController
     {
         $loan = KikobaLoan::where('company_id', $this->getCompanyId())
             ->with([
-                'group', 'groupMember.member', 'loanProduct', 'schedules', 'account',
+                'group', 'groupMember.member', 'loanProduct', 'schedules', 'repayments', 'account',
                 'applicant:id,name,first_name,last_name',
                 'approver:id,name,first_name,last_name',
                 'rejecter:id,name,first_name,last_name',
                 'disburser:id,name,first_name,last_name',
+                'closer:id,name,first_name,last_name',
             ])
             ->find($id);
 
@@ -320,9 +322,17 @@ class KikobaLoanController extends BaseController
         }
 
         $startDate = Carbon::parse($data['start_date'])->startOfDay();
-        $installments = $scheduleService->generate($loan->loanProduct, $approvedAmount, $loan->loan_period, $startDate);
 
-        return $this->successResponse($installments);
+        try {
+            $installments = $scheduleService->generate($loan->loanProduct, $approvedAmount, $loan->loan_period, $startDate);
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
+
+        return $this->successResponse([
+            'installments' => $installments,
+            'disbursement_amount' => $scheduleService->disbursementAmountFor($loan->loanProduct, $approvedAmount),
+        ]);
     }
 
     /**
@@ -360,10 +370,17 @@ class KikobaLoanController extends BaseController
         }
 
         $startDate = Carbon::parse($data['start_date'])->startOfDay();
-        $installments = $scheduleService->generate($product, $approvedAmount, $loan->loan_period, $startDate);
+
+        try {
+            $installments = $scheduleService->generate($product, $approvedAmount, $loan->loan_period, $startDate);
+            $disbursementAmount = $scheduleService->disbursementAmountFor($product, $approvedAmount);
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
+
         $userId = $this->getUserId();
 
-        DB::transaction(function () use ($loan, $installments, $approvedAmount, $startDate, $userId) {
+        DB::transaction(function () use ($loan, $installments, $approvedAmount, $disbursementAmount, $startDate, $userId) {
             foreach ($installments as $i => $inst) {
                 KikobaLoanSchedule::create([
                     'kikoba_loan_id' => $loan->id,
@@ -377,6 +394,7 @@ class KikobaLoanController extends BaseController
 
             $loan->update([
                 'approved_amount' => $approvedAmount,
+                'disbursement_amount' => $disbursementAmount,
                 'start_date' => $startDate->toDateString(),
                 'status' => 'active',
                 'approved_by' => $userId,
@@ -422,7 +440,7 @@ class KikobaLoanController extends BaseController
                 $account = $accountService->disburseLoan(
                     $loan,
                     $data['kikoba_account_id'] ?? null,
-                    (float) $loan->approved_amount,
+                    (float) ($loan->disbursement_amount ?? $loan->approved_amount),
                     $data['disbursement_date'],
                     $userId
                 );
@@ -469,6 +487,99 @@ class KikobaLoanController extends BaseController
         ]);
 
         return $this->successResponse($loan, 'Loan application rejected');
+    }
+
+    public function repayments(int $id)
+    {
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())->find($id);
+        if (! $loan) {
+            return $this->errorResponse('Loan not found', 404);
+        }
+
+        return $this->successResponse(
+            $loan->repayments()->with('receiver:id,name,first_name,last_name')->get()
+        );
+    }
+
+    public function recordRepayment(Request $request, int $id, KikobaLoanRepaymentService $repaymentService)
+    {
+        try {
+            $data = $request->validate([
+                'amount' => 'required|numeric|min:0.01',
+                'paid_date' => 'nullable|date',
+                'kikoba_loan_schedule_id' => 'nullable|integer|exists:kikoba_loan_schedules,id',
+                'reference' => 'nullable|string|max:100',
+                'payment_method' => 'nullable|string|max:50',
+                'notes' => 'nullable|string',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())->find($id);
+        if (! $loan) {
+            return $this->errorResponse('Loan not found', 404);
+        }
+
+        $data['received_by'] = $this->getUserId();
+
+        try {
+            $repaymentService->recordPayment($loan, $data);
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
+
+        return $this->successResponse(
+            $loan->fresh()->load(['group', 'groupMember.member', 'loanProduct', 'schedules', 'repayments']),
+            'Repayment recorded successfully',
+            201
+        );
+    }
+
+    /**
+     * Mark an active loan as defaulted — the borrower has stopped paying and
+     * it's not expected to be recovered through normal repayment.
+     */
+    public function markDefaulted(Request $request, int $id)
+    {
+        return $this->closeLoan($request, $id, 'defaulted', 'Loan marked as defaulted');
+    }
+
+    /**
+     * Write off an active or already-defaulted loan — the group is
+     * formally absorbing the loss.
+     */
+    public function writeOff(Request $request, int $id)
+    {
+        return $this->closeLoan($request, $id, 'written_off', 'Loan written off', ['active', 'defaulted']);
+    }
+
+    private function closeLoan(Request $request, int $id, string $newStatus, string $successMessage, array $fromStatuses = ['active'])
+    {
+        try {
+            $data = $request->validate([
+                'closure_reason' => 'required|string|max:1000',
+            ]);
+        } catch (ValidationException $e) {
+            return $this->validationErrorResponse($e);
+        }
+
+        $loan = KikobaLoan::where('company_id', $this->getCompanyId())
+            ->whereIn('status', $fromStatuses)
+            ->find($id);
+
+        if (! $loan) {
+            return $this->errorResponse('Loan not found or not in a closeable status', 404);
+        }
+
+        $loan->update([
+            'status' => $newStatus,
+            'closed_at' => now(),
+            'closed_by' => $this->getUserId(),
+            'closure_reason' => $data['closure_reason'],
+        ]);
+
+        return $this->successResponse($loan->fresh(), $successMessage);
     }
 
     /**

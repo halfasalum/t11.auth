@@ -6,6 +6,7 @@ use App\Models\KikobaAccount;
 use App\Models\KikobaAccountTransaction;
 use App\Models\KikobaContribution;
 use App\Models\KikobaLoan;
+use App\Models\KikobaLoanRepayment;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -132,5 +133,30 @@ class KikobaAccountService
         );
 
         return $account;
+    }
+
+    /**
+     * Auto-post a loan repayment as a credit back to its group's account —
+     * the mirror image of disburseLoan(). Additive like the contribution
+     * credit: a group with no account just doesn't get a ledger entry, since
+     * repayment recording shouldn't be blocked by banking being unset up.
+     */
+    public function creditLoanRepayment(KikobaLoan $loan, float $amount, KikobaLoanRepayment $repayment): void
+    {
+        $account = KikobaAccount::where('kikoba_group_id', $loan->kikoba_group_id)->first();
+        if (! $account) {
+            return;
+        }
+
+        $this->post(
+            account: $account,
+            type: 'credit',
+            amount: $amount,
+            transactionDate: $repayment->paid_date ?? now()->toDateString(),
+            source: 'loan_repayment',
+            registeredBy: $repayment->received_by,
+            description: "Loan repayment — {$loan->loan_number}",
+            loanId: $loan->id
+        );
     }
 }

@@ -4,6 +4,7 @@ namespace App\Services\Kikoba;
 
 use App\Models\KikobaLoanProduct;
 use Carbon\Carbon;
+use InvalidArgumentException;
 
 /**
  * Builds a Kikoba loan's repayment installment schedule at approval time.
@@ -15,6 +16,8 @@ class KikobaLoanScheduleService
 {
     /**
      * @return array<int, array{due_date: string, principal: float, interest: float, total: float}>
+     * @throws InvalidArgumentException when a 'deducted_upfront' product's
+     *                                   interest would exceed the approved amount
      */
     public function generate(KikobaLoanProduct $product, float $approvedAmount, int $loanPeriod, Carbon $startDate): array
     {
@@ -25,16 +28,8 @@ class KikobaLoanScheduleService
 
         $installmentCount = $this->countInstallments($startDate, $endDate, $interval, $intervalUnit);
 
-        // Simple (non-reducing-balance) interest: a single flat amount for
-        // the whole loan — the product's rate applied once against the
-        // approved principal (not per installment, which would scale the
-        // total up with the installment count) — then divided evenly across
-        // installments below, same as the principal.
-        $totalInterest = $product->interest_mode === 'fixed'
-            ? (float) $product->interest_amount
-            : round($approvedAmount * ((float) $product->interest_rate / 100), 2);
-
-        $totalPrincipal = round($approvedAmount, 2);
+        $totalInterest = $this->computeTotalInterest($product, $approvedAmount);
+        $totalPrincipal = $this->principalFor($product, $approvedAmount, $totalInterest);
 
         $installments = [];
         $principalRemainder = $totalPrincipal;
@@ -60,6 +55,54 @@ class KikobaLoanScheduleService
         }
 
         return $installments;
+    }
+
+    /**
+     * What actually leaves the account at disbursement — the full approved
+     * amount for an 'add_on' product, or approved_amount minus interest for
+     * a 'deducted_upfront' one (interest collected upfront out of the loan
+     * itself rather than added on top of it).
+     *
+     * @throws InvalidArgumentException when a 'deducted_upfront' product's
+     *                                   interest would exceed the approved amount
+     */
+    public function disbursementAmountFor(KikobaLoanProduct $product, float $approvedAmount): float
+    {
+        $totalInterest = $this->computeTotalInterest($product, $approvedAmount);
+
+        return $this->principalFor($product, $approvedAmount, $totalInterest);
+    }
+
+    // Simple (non-reducing-balance) interest: a single flat amount for the
+    // whole loan — the product's rate applied once against the approved
+    // amount (not per installment, which would scale the total up with the
+    // installment count) — then divided evenly across installments.
+    private function computeTotalInterest(KikobaLoanProduct $product, float $approvedAmount): float
+    {
+        return $product->interest_mode === 'fixed'
+            ? (float) $product->interest_amount
+            : round($approvedAmount * ((float) $product->interest_rate / 100), 2);
+    }
+
+    // add_on: approved_amount IS the principal — interest is extra, so the
+    // member repays more than they borrowed.
+    // deducted_upfront: approved_amount IS the total repayable — interest is
+    // carved out of it at disbursement, so the member receives less than
+    // they'll repay.
+    private function principalFor(KikobaLoanProduct $product, float $approvedAmount, float $totalInterest): float
+    {
+        if ($product->interest_application !== 'deducted_upfront') {
+            return round($approvedAmount, 2);
+        }
+
+        if ($totalInterest >= $approvedAmount) {
+            throw new InvalidArgumentException(
+                'Interest (' . number_format($totalInterest, 2) . ') cannot exceed the approved amount (' .
+                    number_format($approvedAmount, 2) . ') for a deducted-upfront interest product'
+            );
+        }
+
+        return round($approvedAmount - $totalInterest, 2);
     }
 
     private function countInstallments(Carbon $start, Carbon $end, int $interval, string $intervalUnit): int

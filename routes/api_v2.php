@@ -501,6 +501,10 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('loans/{id}/approve', [KikobaLoanController::class, 'approve']);
         Route::post('loans/{id}/disburse', [KikobaLoanController::class, 'disburse']);
         Route::post('loans/{id}/reject', [KikobaLoanController::class, 'reject']);
+        Route::get('loans/{id}/repayments', [KikobaLoanController::class, 'repayments']);
+        Route::post('loans/{id}/repayments', [KikobaLoanController::class, 'recordRepayment']);
+        Route::post('loans/{id}/default', [KikobaLoanController::class, 'markDefaulted']);
+        Route::post('loans/{id}/write-off', [KikobaLoanController::class, 'writeOff']);
 
         // Kikoba bank accounts (one per group) + manual transactions.
         // Contributions/loan approvals also auto-post here (see the

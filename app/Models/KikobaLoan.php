@@ -15,8 +15,9 @@ class KikobaLoan extends Model
         'company_id', 'kikoba_group_id', 'kikoba_group_member_id', 'kikoba_loan_product_id', 'kikoba_account_id',
         'loan_number', 'share_value_at_application', 'multiplier', 'eligible_amount', 'requested_amount',
         'loan_period', 'purpose', 'document_path', 'notes', 'status', 'applied_by',
-        'approved_amount', 'start_date', 'approved_by', 'approved_at',
+        'approved_amount', 'disbursement_amount', 'start_date', 'approved_by', 'approved_at',
         'disbursed_at', 'disbursed_by',
+        'closed_at', 'closed_by', 'closure_reason',
         'rejected_by', 'rejected_at', 'rejection_reason',
     ];
 
@@ -26,20 +27,25 @@ class KikobaLoan extends Model
         'eligible_amount' => 'decimal:2',
         'requested_amount' => 'decimal:2',
         'approved_amount' => 'decimal:2',
+        'disbursement_amount' => 'decimal:2',
         'loan_period' => 'integer',
         'start_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
         'disbursed_at' => 'datetime',
+        'closed_at' => 'datetime',
         'rejected_at' => 'datetime',
     ];
 
-    protected $appends = ['interest_total', 'total_loan', 'paid_amount', 'balance'];
+    protected $appends = ['interest_total', 'total_loan', 'paid_amount', 'balance', 'is_overdue', 'overdue_amount'];
 
-    // These four are only meaningful once a schedule exists (i.e. the loan is
-    // active) — null before that since interest isn't computed until approval.
+    // Any status past approval has a real, generated schedule to report on.
+    public const SCHEDULED_STATUSES = ['active', 'completed', 'early_settled', 'defaulted', 'written_off'];
+
+    // These are only meaningful once a schedule exists — null before that
+    // since interest isn't computed until approval.
     public function getInterestTotalAttribute(): ?float
     {
-        if ($this->status !== 'active') {
+        if (! in_array($this->status, self::SCHEDULED_STATUSES, true)) {
             return null;
         }
 
@@ -48,18 +54,26 @@ class KikobaLoan extends Model
 
     public function getTotalLoanAttribute(): ?float
     {
-        if ($this->status !== 'active' || $this->approved_amount === null) {
+        if (! in_array($this->status, self::SCHEDULED_STATUSES, true)) {
             return null;
         }
 
-        return round((float) $this->approved_amount + $this->interest_total, 2);
+        // Sum of the schedule's own totals — correct for both interest
+        // styles: for 'add_on' this equals approved_amount + interest (the
+        // schedule's principal already IS approved_amount); for
+        // 'deducted_upfront' it equals approved_amount exactly (the
+        // schedule's principal is already net of interest), not
+        // approved_amount + interest which would double-count it.
+        return round((float) $this->schedules->sum('total_amount'), 2);
     }
 
-    // No repayment-recording phase exists yet, so every active loan is
-    // currently unpaid — this is a real (if always-zero) value, not a stub.
     public function getPaidAmountAttribute(): ?float
     {
-        return $this->status === 'active' ? 0.0 : null;
+        if (! in_array($this->status, self::SCHEDULED_STATUSES, true)) {
+            return null;
+        }
+
+        return round((float) $this->schedules->sum('paid_amount'), 2);
     }
 
     public function getBalanceAttribute(): ?float
@@ -69,6 +83,30 @@ class KikobaLoan extends Model
         }
 
         return round($this->total_loan - $this->paid_amount, 2);
+    }
+
+    // Only a currently-active (disbursed-or-not, still-open) loan can be
+    // overdue — a closed loan (completed/early_settled/defaulted/written_off)
+    // isn't "overdue" anymore regardless of its schedule's due dates.
+    public function getIsOverdueAttribute(): bool
+    {
+        return $this->overdue_amount > 0;
+    }
+
+    public function getOverdueAmountAttribute(): float
+    {
+        if ($this->status !== 'active') {
+            return 0.0;
+        }
+
+        $today = now()->toDateString();
+
+        return round(
+            (float) $this->schedules
+                ->filter(fn ($s) => $s->due_date->toDateString() < $today)
+                ->sum(fn ($s) => max(0, (float) $s->total_amount - (float) $s->paid_amount)),
+            2
+        );
     }
 
     public function company(): BelongsTo
@@ -109,6 +147,16 @@ class KikobaLoan extends Model
     public function disburser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'disbursed_by');
+    }
+
+    public function closer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'closed_by');
+    }
+
+    public function repayments(): HasMany
+    {
+        return $this->hasMany(KikobaLoanRepayment::class)->orderByDesc('paid_date');
     }
 
     public function account(): BelongsTo
