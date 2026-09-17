@@ -25,7 +25,7 @@ class KikobaContributionController extends BaseController
             ->with(['memberProduct.groupMember.member', 'memberProduct.groupProduct.product', 'schedule']);
 
         if ($request->filled('kikoba_group_member_product_id')) {
-            $query->where('kikoba_group_member_product_id', $request->integer('kikoba_group_member_product_id'));
+            $query->where('group_member_product_id', $request->integer('kikoba_group_member_product_id'));
         }
 
         if ($request->filled('kikoba_group_id')) {

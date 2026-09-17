@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V2\AIController;
 use App\Http\Controllers\Api\V2\CompanyRegistrationController;
 use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
+use App\Http\Controllers\Api\V2\Kikoba\KikobaAccountController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaContributionController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaDashboardController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaFinancialYearController;
@@ -498,7 +499,19 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('loans/{id}/cancel', [KikobaLoanController::class, 'cancel']);
         Route::post('loans/{id}/preview-schedule', [KikobaLoanController::class, 'previewSchedule']);
         Route::post('loans/{id}/approve', [KikobaLoanController::class, 'approve']);
+        Route::post('loans/{id}/disburse', [KikobaLoanController::class, 'disburse']);
         Route::post('loans/{id}/reject', [KikobaLoanController::class, 'reject']);
+
+        // Kikoba bank accounts (one per group) + manual transactions.
+        // Contributions/loan approvals also auto-post here (see the
+        // relevant services) when a group has an account registered.
+        Route::get('accounts', [KikobaAccountController::class, 'index']);
+        Route::post('accounts', [KikobaAccountController::class, 'store']);
+        Route::post('accounts/transfer', [KikobaAccountController::class, 'transfer']);
+        Route::get('accounts/{id}', [KikobaAccountController::class, 'show']);
+        Route::get('accounts/{id}/transactions', [KikobaAccountController::class, 'transactions']);
+        Route::post('accounts/{id}/deposit', [KikobaAccountController::class, 'deposit']);
+        Route::post('accounts/{id}/withdraw', [KikobaAccountController::class, 'withdraw']);
 
         // Groups
         Route::get('groups', [KikobaGroupController::class, 'index']);

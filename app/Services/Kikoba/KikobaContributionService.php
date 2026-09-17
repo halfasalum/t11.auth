@@ -10,6 +10,8 @@ use InvalidArgumentException;
 
 class KikobaContributionService
 {
+    public function __construct(protected KikobaAccountService $accountService) {}
+
     /**
      * Record a payment. If no schedule_id is given, it is auto-allocated to
      * the earliest outstanding schedule for that member/product. Any excess
@@ -28,8 +30,8 @@ class KikobaContributionService
             $scheduleId = $data['kikoba_contribution_schedule_id'] ?? null;
 
             $contribution = KikobaContribution::create([
-                'kikoba_group_member_product_id' => $memberProduct->id,
-                'kikoba_contribution_schedule_id' => $scheduleId,
+                'group_member_product_id' => $memberProduct->id,
+                'contribution_schedule_id' => $scheduleId,
                 'amount' => $amount,
                 'paid_date' => $data['paid_date'] ?? now()->toDateString(),
                 'reference' => $data['reference'] ?? null,
@@ -42,6 +44,11 @@ class KikobaContributionService
                 $this->applyToSchedule($scheduleId, $amount);
             } else {
                 $this->autoAllocate($memberProduct, $amount);
+            }
+
+            if ($amount > 0) {
+                $groupId = $memberProduct->groupMember->group->id;
+                $this->accountService->creditForContribution($groupId, $amount, $contribution);
             }
 
             return $contribution->fresh();

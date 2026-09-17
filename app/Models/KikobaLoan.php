@@ -12,10 +12,11 @@ class KikobaLoan extends Model
     use HasFactory;
 
     protected $fillable = [
-        'company_id', 'kikoba_group_id', 'kikoba_group_member_id', 'kikoba_loan_product_id',
+        'company_id', 'kikoba_group_id', 'kikoba_group_member_id', 'kikoba_loan_product_id', 'kikoba_account_id',
         'loan_number', 'share_value_at_application', 'multiplier', 'eligible_amount', 'requested_amount',
         'loan_period', 'purpose', 'document_path', 'notes', 'status', 'applied_by',
         'approved_amount', 'start_date', 'approved_by', 'approved_at',
+        'disbursed_at', 'disbursed_by',
         'rejected_by', 'rejected_at', 'rejection_reason',
     ];
 
@@ -28,6 +29,7 @@ class KikobaLoan extends Model
         'loan_period' => 'integer',
         'start_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
+        'disbursed_at' => 'datetime',
         'rejected_at' => 'datetime',
     ];
 
@@ -102,6 +104,16 @@ class KikobaLoan extends Model
     public function rejecter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    public function disburser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'disbursed_by');
+    }
+
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(KikobaAccount::class, 'kikoba_account_id');
     }
 
     public function schedules(): HasMany

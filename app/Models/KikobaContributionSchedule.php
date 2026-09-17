@@ -65,7 +65,7 @@ class KikobaContributionSchedule extends Model
 
     public function contributions(): HasMany
     {
-        return $this->hasMany(KikobaContribution::class, 'kikoba_contribution_schedule_id');
+        return $this->hasMany(KikobaContribution::class, 'contribution_schedule_id');
     }
 
     public function penalties(): HasMany
