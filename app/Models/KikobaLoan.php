@@ -15,7 +15,7 @@ class KikobaLoan extends Model
         'company_id', 'kikoba_group_id', 'kikoba_group_member_id', 'kikoba_loan_product_id', 'kikoba_account_id',
         'loan_number', 'share_value_at_application', 'multiplier', 'eligible_amount', 'requested_amount',
         'loan_period', 'purpose', 'document_path', 'notes', 'status', 'applied_by',
-        'approved_amount', 'disbursement_amount', 'start_date', 'approved_by', 'approved_at',
+        'approved_amount', 'disbursement_amount', 'upfront_interest_amount', 'start_date', 'approved_by', 'approved_at',
         'disbursed_at', 'disbursed_by',
         'closed_at', 'closed_by', 'closure_reason',
         'rejected_by', 'rejected_at', 'rejection_reason',
@@ -28,6 +28,7 @@ class KikobaLoan extends Model
         'requested_amount' => 'decimal:2',
         'approved_amount' => 'decimal:2',
         'disbursement_amount' => 'decimal:2',
+        'upfront_interest_amount' => 'decimal:2',
         'loan_period' => 'integer',
         'start_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
@@ -42,14 +43,18 @@ class KikobaLoan extends Model
     public const SCHEDULED_STATUSES = ['active', 'completed', 'early_settled', 'defaulted', 'written_off'];
 
     // These are only meaningful once a schedule exists — null before that
-    // since interest isn't computed until approval.
+    // since interest isn't computed until approval. All three fold in
+    // upfront_interest_amount ('deducted_upfront' products only — 0/null
+    // for 'add_on') since that interest is real but lives outside the
+    // schedule itself, collected once at disbursement instead of spread
+    // across installments.
     public function getInterestTotalAttribute(): ?float
     {
         if (! in_array($this->status, self::SCHEDULED_STATUSES, true)) {
             return null;
         }
 
-        return round((float) $this->schedules->sum('interest_amount'), 2);
+        return round((float) $this->schedules->sum('interest_amount') + (float) $this->upfront_interest_amount, 2);
     }
 
     public function getTotalLoanAttribute(): ?float
@@ -58,13 +63,9 @@ class KikobaLoan extends Model
             return null;
         }
 
-        // Sum of the schedule's own totals — correct for both interest
-        // styles: for 'add_on' this equals approved_amount + interest (the
-        // schedule's principal already IS approved_amount); for
-        // 'deducted_upfront' it equals approved_amount exactly (the
-        // schedule's principal is already net of interest), not
-        // approved_amount + interest which would double-count it.
-        return round((float) $this->schedules->sum('total_amount'), 2);
+        // Full cost of credit: the schedule's principal (always the full
+        // approved amount) + interest, wherever that interest is collected.
+        return round((float) $this->schedules->sum('total_amount') + (float) $this->upfront_interest_amount, 2);
     }
 
     public function getPaidAmountAttribute(): ?float
@@ -73,7 +74,11 @@ class KikobaLoan extends Model
             return null;
         }
 
-        return round((float) $this->schedules->sum('paid_amount'), 2);
+        // Upfront interest counts as paid only once it's actually been
+        // collected, i.e. once the loan is disbursed — not merely approved.
+        $upfrontPaid = $this->disbursed_at !== null ? (float) $this->upfront_interest_amount : 0.0;
+
+        return round((float) $this->schedules->sum('paid_amount') + $upfrontPaid, 2);
     }
 
     public function getBalanceAttribute(): ?float

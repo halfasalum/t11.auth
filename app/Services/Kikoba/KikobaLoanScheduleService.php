@@ -28,18 +28,25 @@ class KikobaLoanScheduleService
 
         $installmentCount = $this->countInstallments($startDate, $endDate, $interval, $intervalUnit);
 
-        $totalInterest = $this->computeTotalInterest($product, $approvedAmount);
-        $totalPrincipal = $this->principalFor($product, $approvedAmount, $totalInterest);
+        // The schedule always amortizes the FULL approved amount as
+        // principal — 'deducted_upfront' doesn't shrink the loan, it just
+        // moves when the interest is collected (see upfrontInterestFor()).
+        // So the ongoing installments only ever carry interest for 'add_on'.
+        $this->assertInterestFits($product, $approvedAmount);
+        $totalPrincipal = round($approvedAmount, 2);
+        $scheduleInterest = $product->interest_application === 'deducted_upfront'
+            ? 0.0
+            : $this->computeTotalInterest($product, $approvedAmount);
 
         $installments = [];
         $principalRemainder = $totalPrincipal;
-        $interestRemainder = $totalInterest;
+        $interestRemainder = $scheduleInterest;
 
         for ($i = 1; $i <= $installmentCount; $i++) {
             $isLast = $i === $installmentCount;
 
             $principal = $isLast ? $principalRemainder : round($totalPrincipal / $installmentCount, 2);
-            $interest = $isLast ? $interestRemainder : round($totalInterest / $installmentCount, 2);
+            $interest = $isLast ? $interestRemainder : round($scheduleInterest / $installmentCount, 2);
 
             $principalRemainder = round($principalRemainder - $principal, 2);
             $interestRemainder = round($interestRemainder - $interest, 2);
@@ -58,25 +65,37 @@ class KikobaLoanScheduleService
     }
 
     /**
-     * What actually leaves the account at disbursement — the full approved
-     * amount for an 'add_on' product, or approved_amount minus interest for
-     * a 'deducted_upfront' one (interest collected upfront out of the loan
-     * itself rather than added on top of it).
+     * The interest portion collected immediately at disbursement for a
+     * 'deducted_upfront' product — 0 for 'add_on' (its interest is spread
+     * across the schedule instead, via generate()).
      *
-     * @throws InvalidArgumentException when a 'deducted_upfront' product's
-     *                                   interest would exceed the approved amount
+     * @throws InvalidArgumentException when it would exceed the approved amount
+     */
+    public function upfrontInterestFor(KikobaLoanProduct $product, float $approvedAmount): float
+    {
+        if ($product->interest_application !== 'deducted_upfront') {
+            return 0.0;
+        }
+
+        $this->assertInterestFits($product, $approvedAmount);
+
+        return $this->computeTotalInterest($product, $approvedAmount);
+    }
+
+    /**
+     * What actually leaves the account at disbursement — the full approved
+     * amount for 'add_on' (interest is added on top, not taken from it), or
+     * approved_amount minus the upfront interest for 'deducted_upfront'.
      */
     public function disbursementAmountFor(KikobaLoanProduct $product, float $approvedAmount): float
     {
-        $totalInterest = $this->computeTotalInterest($product, $approvedAmount);
-
-        return $this->principalFor($product, $approvedAmount, $totalInterest);
+        return round($approvedAmount - $this->upfrontInterestFor($product, $approvedAmount), 2);
     }
 
     // Simple (non-reducing-balance) interest: a single flat amount for the
     // whole loan — the product's rate applied once against the approved
     // amount (not per installment, which would scale the total up with the
-    // installment count) — then divided evenly across installments.
+    // installment count).
     private function computeTotalInterest(KikobaLoanProduct $product, float $approvedAmount): float
     {
         return $product->interest_mode === 'fixed'
@@ -84,16 +103,13 @@ class KikobaLoanScheduleService
             : round($approvedAmount * ((float) $product->interest_rate / 100), 2);
     }
 
-    // add_on: approved_amount IS the principal — interest is extra, so the
-    // member repays more than they borrowed.
-    // deducted_upfront: approved_amount IS the total repayable — interest is
-    // carved out of it at disbursement, so the member receives less than
-    // they'll repay.
-    private function principalFor(KikobaLoanProduct $product, float $approvedAmount, float $totalInterest): float
+    private function assertInterestFits(KikobaLoanProduct $product, float $approvedAmount): void
     {
         if ($product->interest_application !== 'deducted_upfront') {
-            return round($approvedAmount, 2);
+            return;
         }
+
+        $totalInterest = $this->computeTotalInterest($product, $approvedAmount);
 
         if ($totalInterest >= $approvedAmount) {
             throw new InvalidArgumentException(
@@ -101,8 +117,6 @@ class KikobaLoanScheduleService
                     number_format($approvedAmount, 2) . ') for a deducted-upfront interest product'
             );
         }
-
-        return round($approvedAmount - $totalInterest, 2);
     }
 
     private function countInstallments(Carbon $start, Carbon $end, int $interval, string $intervalUnit): int

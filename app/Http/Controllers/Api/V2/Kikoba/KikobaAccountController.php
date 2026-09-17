@@ -7,15 +7,18 @@ use App\Models\KikobaAccount;
 use App\Models\KikobaGroup;
 use App\Services\Kikoba\KikobaAccountService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
- * Kikoba bank accounts — one per group, holding its pooled funds. Manual
- * deposit/withdraw/transfer here mirror BankController's shape; contribution
- * and loan-approval flows also auto-post to these accounts when a group has
- * one registered (see KikobaAccountService).
+ * Kikoba bank accounts — a group can register more than one, each holding
+ * its own pooled funds. Manual deposit/withdraw/transfer here mirror
+ * BankController's shape; contribution auto-crediting and any loan
+ * repayment whose disbursement account is unknown target the group's
+ * PRIMARY account (see KikobaAccountService) — everything else (loan
+ * disbursement, manual transactions) always names an explicit account.
  */
 class KikobaAccountController extends BaseController
 {
@@ -56,9 +59,10 @@ class KikobaAccountController extends BaseController
             return $this->errorResponse('Group not found', 404);
         }
 
-        if (KikobaAccount::where('kikoba_group_id', $group->id)->exists()) {
-            return $this->errorResponse('This group already has an account registered', 422);
-        }
+        // The group's first account is automatically its primary — the one
+        // contribution auto-crediting targets. Later accounts stay secondary
+        // unless explicitly promoted (see setPrimary()).
+        $isFirstForGroup = ! KikobaAccount::where('kikoba_group_id', $group->id)->exists();
 
         $account = KikobaAccount::create([
             'company_id' => $this->getCompanyId(),
@@ -67,6 +71,7 @@ class KikobaAccountController extends BaseController
             'account_number' => $this->generateAccountNumber($group),
             'balance' => 0,
             'currency' => $data['currency'] ?? 'TZS',
+            'is_primary' => $isFirstForGroup,
             'description' => $data['description'] ?? null,
             'created_by' => $this->getUserId(),
         ]);
@@ -84,6 +89,30 @@ class KikobaAccountController extends BaseController
         }
 
         return $this->successResponse($account->fresh()->load('group'), 'Account registered successfully', 201);
+    }
+
+    /**
+     * Designate this account as its group's primary (unsets any other
+     * primary in the same group). The primary is where contribution
+     * auto-crediting lands, and the fallback target for a repayment whose
+     * loan somehow doesn't know which account it was disbursed from.
+     */
+    public function setPrimary(int $id)
+    {
+        $account = KikobaAccount::where('company_id', $this->getCompanyId())->find($id);
+        if (! $account) {
+            return $this->errorResponse('Account not found', 404);
+        }
+
+        DB::transaction(function () use ($account) {
+            KikobaAccount::where('kikoba_group_id', $account->kikoba_group_id)
+                ->where('id', '!=', $account->id)
+                ->update(['is_primary' => false]);
+
+            $account->update(['is_primary' => true]);
+        });
+
+        return $this->successResponse($account->fresh(), 'Account set as primary');
     }
 
     public function show(int $id)

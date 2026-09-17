@@ -516,6 +516,7 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('accounts/{id}/transactions', [KikobaAccountController::class, 'transactions']);
         Route::post('accounts/{id}/deposit', [KikobaAccountController::class, 'deposit']);
         Route::post('accounts/{id}/withdraw', [KikobaAccountController::class, 'withdraw']);
+        Route::post('accounts/{id}/set-primary', [KikobaAccountController::class, 'setPrimary']);
 
         // Groups
         Route::get('groups', [KikobaGroupController::class, 'index']);

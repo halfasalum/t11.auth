@@ -13,11 +13,12 @@ class KikobaAccount extends Model
 
     protected $fillable = [
         'company_id', 'kikoba_group_id', 'account_name', 'account_number',
-        'balance', 'currency', 'status', 'description', 'created_by',
+        'balance', 'currency', 'status', 'is_primary', 'description', 'created_by',
     ];
 
     protected $casts = [
         'balance' => 'decimal:2',
+        'is_primary' => 'boolean',
     ];
 
     public function company(): BelongsTo

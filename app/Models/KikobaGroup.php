@@ -55,9 +55,14 @@ class KikobaGroup extends Model
         return $this->hasMany(KikobaGroupFinancialYear::class);
     }
 
-    public function account(): HasOne
+    public function accounts(): HasMany
     {
-        return $this->hasOne(KikobaAccount::class);
+        return $this->hasMany(KikobaAccount::class);
+    }
+
+    public function primaryAccount(): HasOne
+    {
+        return $this->hasOne(KikobaAccount::class)->where('is_primary', true);
     }
 
     public function financialYears(): BelongsToMany

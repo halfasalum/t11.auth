@@ -332,6 +332,7 @@ class KikobaLoanController extends BaseController
         return $this->successResponse([
             'installments' => $installments,
             'disbursement_amount' => $scheduleService->disbursementAmountFor($loan->loanProduct, $approvedAmount),
+            'upfront_interest_amount' => $scheduleService->upfrontInterestFor($loan->loanProduct, $approvedAmount),
         ]);
     }
 
@@ -373,6 +374,7 @@ class KikobaLoanController extends BaseController
 
         try {
             $installments = $scheduleService->generate($product, $approvedAmount, $loan->loan_period, $startDate);
+            $upfrontInterest = $scheduleService->upfrontInterestFor($product, $approvedAmount);
             $disbursementAmount = $scheduleService->disbursementAmountFor($product, $approvedAmount);
         } catch (InvalidArgumentException $e) {
             return $this->errorResponse($e->getMessage(), 422);
@@ -380,7 +382,7 @@ class KikobaLoanController extends BaseController
 
         $userId = $this->getUserId();
 
-        DB::transaction(function () use ($loan, $installments, $approvedAmount, $disbursementAmount, $startDate, $userId) {
+        DB::transaction(function () use ($loan, $installments, $approvedAmount, $disbursementAmount, $upfrontInterest, $startDate, $userId) {
             foreach ($installments as $i => $inst) {
                 KikobaLoanSchedule::create([
                     'kikoba_loan_id' => $loan->id,
@@ -395,6 +397,7 @@ class KikobaLoanController extends BaseController
             $loan->update([
                 'approved_amount' => $approvedAmount,
                 'disbursement_amount' => $disbursementAmount,
+                'upfront_interest_amount' => $upfrontInterest,
                 'start_date' => $startDate->toDateString(),
                 'status' => 'active',
                 'approved_by' => $userId,
@@ -440,7 +443,8 @@ class KikobaLoanController extends BaseController
                 $account = $accountService->disburseLoan(
                     $loan,
                     $data['kikoba_account_id'] ?? null,
-                    (float) ($loan->disbursement_amount ?? $loan->approved_amount),
+                    (float) $loan->approved_amount,
+                    (float) ($loan->upfront_interest_amount ?? 0),
                     $data['disbursement_date'],
                     $userId
                 );
