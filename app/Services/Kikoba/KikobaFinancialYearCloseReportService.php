@@ -7,6 +7,7 @@ use App\Models\KikobaGroup;
 use App\Models\KikobaGroupFinancialYear;
 use App\Models\KikobaGroupProduct;
 use App\Models\KikobaLoan;
+use App\Models\KikobaLoanInterestClaim;
 use App\Models\KikobaMemberProductYearSummary;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -162,16 +163,25 @@ class KikobaFinancialYearCloseReportService
             [, , $claimableByLoan] = $this->loanInterestData($groupFinancialYear->group);
 
             if (! empty($claimableByLoan)) {
+                $claimedAt = now();
+
                 KikobaLoan::whereIn('id', array_keys($claimableByLoan))
                     ->get()
-                    ->each(function (KikobaLoan $loan) use ($claimableByLoan, $groupFinancialYear) {
+                    ->each(function (KikobaLoan $loan) use ($claimableByLoan, $groupFinancialYear, $claimedAt) {
                         $loan->update([
                             'interest_claimed_amount' => round(
                                 (float) $loan->interest_claimed_amount + $claimableByLoan[$loan->id],
                                 2
                             ),
                             'last_claimed_financial_year_id' => $groupFinancialYear->id,
-                            'interest_claimed_at' => now(),
+                            'interest_claimed_at' => $claimedAt,
+                        ]);
+
+                        KikobaLoanInterestClaim::create([
+                            'kikoba_loan_id' => $loan->id,
+                            'group_financial_year_id' => $groupFinancialYear->id,
+                            'amount' => $claimableByLoan[$loan->id],
+                            'claimed_at' => $claimedAt,
                         ]);
                     });
             }
@@ -182,6 +192,56 @@ class KikobaFinancialYearCloseReportService
                     'status' => 'finalized',
                     'finalized_at' => now(),
                     'generated_by' => $finalizedBy,
+                ]);
+        });
+    }
+
+    /**
+     * Reverse a finalize(): unlocks the cycle's reports back to draft and
+     * gives back exactly the loan interest THIS cycle claimed — read from
+     * kikoba_loan_interest_claims, not just zeroed out — so a
+     * cash_collected loan that has also been (or later gets) claimed by a
+     * different cycle keeps that other cycle's portion untouched. A no-op
+     * (returns 0) if this cycle isn't finalized.
+     */
+    public function unlock(KikobaGroupFinancialYear $groupFinancialYear, ?int $unlockedBy = null): int
+    {
+        return DB::transaction(function () use ($groupFinancialYear, $unlockedBy) {
+            if (! $this->isFinalized($groupFinancialYear)) {
+                return 0;
+            }
+
+            $claims = KikobaLoanInterestClaim::where('group_financial_year_id', $groupFinancialYear->id)->get();
+
+            foreach ($claims as $claim) {
+                /** @var KikobaLoan|null $loan */
+                $loan = KikobaLoan::find($claim->kikoba_loan_id);
+
+                if ($loan) {
+                    $remainingClaim = KikobaLoanInterestClaim::where('kikoba_loan_id', $loan->id)
+                        ->where('group_financial_year_id', '!=', $groupFinancialYear->id)
+                        ->orderByDesc('claimed_at')
+                        ->first();
+
+                    $loan->update([
+                        'interest_claimed_amount' => max(
+                            0,
+                            round((float) $loan->interest_claimed_amount - (float) $claim->amount, 2)
+                        ),
+                        'last_claimed_financial_year_id' => $remainingClaim?->group_financial_year_id,
+                        'interest_claimed_at' => $remainingClaim?->claimed_at,
+                    ]);
+                }
+
+                $claim->delete();
+            }
+
+            return KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
+                ->where('status', 'finalized')
+                ->update([
+                    'status' => 'draft',
+                    'finalized_at' => null,
+                    'generated_by' => $unlockedBy,
                 ]);
         });
     }

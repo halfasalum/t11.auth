@@ -49,8 +49,15 @@ class KikobaDashboardController extends BaseController
             $penalties     = $this->penalties($scopeIds);
             $membersGrowth = $this->membersGrowth($scopeIds, $today);
             $cycles        = $this->financialYearStatus($companyId, $scopeIds, $today);
+            $loanSummary   = $this->loanSummary($scopeIds, $today);
+            $interestIncome = $this->interestIncomeBreakdown($scopeIds);
+            $atRiskLoans   = $this->atRiskLoans($scopeIds, $today);
+            $payoutStatus  = $this->payoutReportStatus($scopeIds);
 
-            $insights = $this->buildInsights($summary, $trend, $groupPerf, $atRisk, $penalties, $upcoming, $cycles, $membersGrowth);
+            $insights = $this->buildInsights(
+                $summary, $trend, $groupPerf, $atRisk, $penalties, $upcoming, $cycles, $membersGrowth,
+                $loanSummary, $atRiskLoans, $payoutStatus
+            );
 
             return $this->successResponse([
                 'filters' => [
@@ -68,6 +75,10 @@ class KikobaDashboardController extends BaseController
                 'penalties' => $penalties,
                 'members_growth' => $membersGrowth,
                 'financial_year_status' => $cycles,
+                'loan_summary' => $loanSummary,
+                'interest_income' => $interestIncome,
+                'at_risk_loans' => $atRiskLoans,
+                'payout_report_status' => $payoutStatus,
                 'insights' => $insights,
             ]);
         } catch (\Throwable $e) {
@@ -469,12 +480,198 @@ class KikobaDashboardController extends BaseController
         ];
     }
 
+    /**
+     * Base query over loans, restricted to $groupIds.
+     */
+    private function loanQuery(array $groupIds)
+    {
+        return DB::table('kikoba_loans as l')
+            ->whereIn('l.kikoba_group_id', $groupIds);
+    }
+
+    /**
+     * Base query over loan schedules, joined up to the owning loan and
+     * restricted to $groupIds.
+     */
+    private function loanScheduleQuery(array $groupIds)
+    {
+        return DB::table('kikoba_loan_schedules as ls')
+            ->join('kikoba_loans as l', 'l.id', '=', 'ls.kikoba_loan_id')
+            ->whereIn('l.kikoba_group_id', $groupIds);
+    }
+
+    private function loanSummary(array $groupIds, Carbon $today): array
+    {
+        $t = $today->toDateString();
+
+        $loans = $this->loanQuery($groupIds)
+            ->selectRaw('
+                COALESCE(SUM(CASE WHEN l.disbursed_at IS NOT NULL THEN l.approved_amount ELSE 0 END), 0) as total_disbursed,
+                SUM(CASE WHEN l.status = "active" THEN 1 ELSE 0 END) as active_loans,
+                SUM(CASE WHEN l.status = "pending" THEN 1 ELSE 0 END) as pending_applications,
+                SUM(CASE WHEN l.status IN ("completed","early_settled") THEN 1 ELSE 0 END) as completed_loans,
+                SUM(CASE WHEN l.status IN ("defaulted","written_off") THEN 1 ELSE 0 END) as defaulted_loans
+            ')
+            ->first();
+
+        // Outstanding balance / overdue amount only make sense for loans
+        // still open (active) — a schedule row's own paid/total tracks
+        // principal + spread interest; upfront interest is settled at
+        // disbursement so it never contributes to what's still owed.
+        $sched = $this->loanScheduleQuery($groupIds)
+            ->where('l.status', 'active')
+            ->selectRaw('
+                COALESCE(SUM(ls.total_amount - ls.paid_amount), 0) as outstanding_balance,
+                COALESCE(SUM(CASE WHEN ls.due_date < ? AND ls.status IN ("pending","partial","overdue")
+                    THEN ls.total_amount - ls.paid_amount ELSE 0 END), 0) as overdue_amount,
+                SUM(CASE WHEN ls.due_date < ? AND ls.status IN ("pending","partial","overdue") THEN 1 ELSE 0 END) as overdue_schedules
+            ', [$t, $t])
+            ->first();
+
+        return [
+            'total_disbursed' => round((float) $loans->total_disbursed, 2),
+            'active_loans' => (int) $loans->active_loans,
+            'pending_applications' => (int) $loans->pending_applications,
+            'completed_loans' => (int) $loans->completed_loans,
+            'defaulted_loans' => (int) $loans->defaulted_loans,
+            'outstanding_balance' => round((float) $sched->outstanding_balance, 2),
+            'overdue_amount' => round((float) $sched->overdue_amount, 2),
+            'overdue_schedules' => (int) $sched->overdue_schedules,
+        ];
+    }
+
+    private function interestIncomeBreakdown(array $groupIds): array
+    {
+        // Upfront: the interest_income ledger leg posted at disbursement
+        // for deducted_upfront products — already fully collected in one go.
+        $upfront = (float) DB::table('kikoba_account_transactions')
+            ->whereIn('kikoba_group_id', $groupIds)
+            ->where('source', 'interest_income')
+            ->sum('amount');
+
+        // Installment: the interest portion of whatever's been paid against
+        // add_on schedules so far, assumed proportional to each
+        // installment's own principal/interest split (mirrors
+        // KikobaFinancialYearCloseReportService::collectedInterestFor()).
+        // Always 0 for a deducted_upfront loan's rows, since their schedule
+        // interest_amount is 0 — so this can never double-count the upfront
+        // leg above.
+        $installment = (float) $this->loanScheduleQuery($groupIds)
+            ->where('ls.total_amount', '>', 0)
+            ->selectRaw('COALESCE(SUM(ls.paid_amount * ls.interest_amount / ls.total_amount), 0) as v')
+            ->value('v');
+
+        return [
+            'upfront_collected' => round($upfront, 2),
+            'installment_collected' => round($installment, 2),
+            'total_collected' => round($upfront + $installment, 2),
+        ];
+    }
+
+    private function atRiskLoans(array $groupIds, Carbon $today): array
+    {
+        $t = $today->toDateString();
+
+        $rows = $this->loanScheduleQuery($groupIds)
+            ->join('kikoba_group_members as gm', 'gm.id', '=', 'l.kikoba_group_member_id')
+            ->join('kikoba_members as m', 'm.id', '=', 'gm.kikoba_member_id')
+            ->join('kikoba_groups as g', 'g.id', '=', 'l.kikoba_group_id')
+            ->where('l.status', 'active')
+            ->where('ls.due_date', '<', $t)
+            ->whereIn('ls.status', ['pending', 'partial', 'overdue'])
+            ->groupBy('l.id', 'l.loan_number', 'm.first_name', 'm.middle_name', 'm.last_name', 'm.phone', 'g.name')
+            ->selectRaw('
+                l.id as loan_id,
+                l.loan_number as loan_number,
+                TRIM(CONCAT(m.first_name, " ", COALESCE(m.middle_name, ""), " ", m.last_name)) as member_name,
+                m.phone as phone,
+                g.name as group_name,
+                COALESCE(SUM(ls.total_amount - ls.paid_amount), 0) as overdue_amount,
+                COUNT(*) as missed_count,
+                MIN(ls.due_date) as oldest_due_date
+            ')
+            ->orderByDesc('overdue_amount')
+            ->limit(10)
+            ->get();
+
+        return $rows->map(fn ($r) => [
+            'loan_id' => (int) $r->loan_id,
+            'loan_number' => $r->loan_number,
+            'member_name' => $r->member_name,
+            'phone' => $r->phone,
+            'group_name' => $r->group_name,
+            'overdue_amount' => round((float) $r->overdue_amount, 2),
+            'missed_count' => (int) $r->missed_count,
+            'oldest_due_date' => $r->oldest_due_date,
+            'days_overdue' => $r->oldest_due_date ? (int) abs($today->diffInDays(Carbon::parse($r->oldest_due_date))) : 0,
+        ])->all();
+    }
+
+    private function payoutReportStatus(array $groupIds): array
+    {
+        $cycles = DB::table('kikoba_group_financial_years as gfy')
+            ->join('kikoba_groups as g', 'g.id', '=', 'gfy.kikoba_group_id')
+            ->whereIn('gfy.kikoba_group_id', $groupIds)
+            ->where('gfy.status', 'closed')
+            ->select('gfy.id', 'gfy.kikoba_group_id', 'g.name as group_name', 'gfy.start_date', 'gfy.end_date')
+            ->get();
+
+        if ($cycles->isEmpty()) {
+            return ['finalized' => 0, 'draft' => 0, 'not_generated' => 0, 'needs_attention' => []];
+        }
+
+        $reportStatusByGfy = DB::table('kikoba_financial_year_close_reports')
+            ->whereIn('group_financial_year_id', $cycles->pluck('id'))
+            ->groupBy('group_financial_year_id')
+            ->selectRaw('
+                group_financial_year_id,
+                SUM(CASE WHEN status = "finalized" THEN 1 ELSE 0 END) as finalized_rows,
+                COUNT(*) as total_rows
+            ')
+            ->get()
+            ->keyBy('group_financial_year_id');
+
+        $finalized = 0;
+        $draft = 0;
+        $notGenerated = 0;
+        $needsAttention = [];
+
+        foreach ($cycles as $cycle) {
+            $status = $reportStatusByGfy->get($cycle->id);
+
+            if (! $status || (int) $status->total_rows === 0) {
+                $notGenerated++;
+                $needsAttention[] = $cycle;
+            } elseif ((int) $status->finalized_rows === (int) $status->total_rows) {
+                $finalized++;
+            } else {
+                $draft++;
+                $needsAttention[] = $cycle;
+            }
+        }
+
+        return [
+            'finalized' => $finalized,
+            'draft' => $draft,
+            'not_generated' => $notGenerated,
+            'needs_attention' => collect($needsAttention)->take(5)->map(fn ($c) => [
+                'group_id' => (int) $c->kikoba_group_id,
+                'group_financial_year_id' => (int) $c->id,
+                'group_name' => $c->group_name,
+                'start_date' => $c->start_date,
+                'end_date' => $c->end_date,
+            ])->values()->all(),
+        ];
+    }
+
     /* ───────────────────────────────────────────────────────────────────── */
     /*  Insight engine                                                        */
     /* ───────────────────────────────────────────────────────────────────── */
 
-    private function buildInsights(array $summary, array $trend, array $groupPerf, array $atRisk, array $penalties, array $upcoming, array $cycles, array $membersGrowth): array
-    {
+    private function buildInsights(
+        array $summary, array $trend, array $groupPerf, array $atRisk, array $penalties, array $upcoming,
+        array $cycles, array $membersGrowth, array $loanSummary, array $atRiskLoans, array $payoutStatus
+    ): array {
         $insights = [];
 
         // Collection-rate momentum: compare the last two COMPLETED months (the
@@ -548,9 +745,36 @@ class KikobaDashboardController extends BaseController
                 '. Prepare close reports and payouts.');
         }
 
+        // Overdue loan repayments
+        if ($loanSummary['overdue_amount'] > 0) {
+            $loanCount = count($atRiskLoans);
+            $insights[] = $this->insight('danger', $this->money($loanSummary['overdue_amount']) . ' in overdue loan repayments',
+                "{$loanSummary['overdue_schedules']} loan installments are past due across {$loanCount} loan(s). Follow up before they default.");
+        }
+
+        // Pending loan applications piling up
+        if ($loanSummary['pending_applications'] >= 3) {
+            $insights[] = $this->insight('info', "{$loanSummary['pending_applications']} loan applications awaiting review",
+                'Members are waiting on a decision — review and approve or reject these applications.');
+        }
+
+        // Defaulted/written-off loans
+        if ($loanSummary['defaulted_loans'] > 0) {
+            $insights[] = $this->insight('warning', "{$loanSummary['defaulted_loans']} loan(s) defaulted or written off",
+                'Their interest was never realized as income and will not appear in any payout report.');
+        }
+
+        // Payout reports needing attention
+        if (! empty($payoutStatus['needs_attention'])) {
+            $names = implode(', ', array_map(fn ($c) => $c['group_name'], array_slice($payoutStatus['needs_attention'], 0, 3)));
+            $more = count($payoutStatus['needs_attention']) > 3 ? ' and more' : '';
+            $insights[] = $this->insight('warning', ($payoutStatus['draft'] + $payoutStatus['not_generated']) . ' closed cycle(s) need a payout report',
+                "{$names}{$more} closed without a finalized payout report yet.");
+        }
+
         if (empty($insights)) {
             $insights[] = $this->insight('success', 'Everything looks healthy',
-                'No collection, penalty, or membership issues need attention right now.');
+                'No collection, penalty, loan, or membership issues need attention right now.');
         }
 
         return $insights;
@@ -596,6 +820,13 @@ class KikobaDashboardController extends BaseController
             'penalties' => ['outstanding_amount' => 0, 'outstanding_count' => 0, 'paid_amount' => 0, 'waived_count' => 0],
             'members_growth' => [],
             'financial_year_status' => ['active_cycles' => 0, 'earliest_end_date' => null, 'cycles_ending_soon' => 0],
+            'loan_summary' => [
+                'total_disbursed' => 0, 'active_loans' => 0, 'pending_applications' => 0, 'completed_loans' => 0,
+                'defaulted_loans' => 0, 'outstanding_balance' => 0, 'overdue_amount' => 0, 'overdue_schedules' => 0,
+            ],
+            'interest_income' => ['upfront_collected' => 0, 'installment_collected' => 0, 'total_collected' => 0],
+            'at_risk_loans' => [],
+            'payout_report_status' => ['finalized' => 0, 'draft' => 0, 'not_generated' => 0, 'needs_attention' => []],
             'insights' => [[
                 'level' => 'info',
                 'title' => 'No groups yet',

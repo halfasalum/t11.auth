@@ -137,6 +137,24 @@ class KikobaReportController extends BaseController
         return $this->successResponse(['finalized_count' => $count], 'Close reports finalized successfully');
     }
 
+    /**
+     * Reverse finalizeCloseReport(): unlocks this cycle's reports back to
+     * draft and gives back whatever loan interest this cycle had claimed,
+     * so it becomes claimable again by a future close.
+     */
+    public function unlockCloseReport(int $groupId, int $groupFinancialYearId)
+    {
+        $groupFinancialYear = $this->findGroupFinancialYear($groupId, $groupFinancialYearId);
+
+        if (! $groupFinancialYear) {
+            return $this->errorResponse('Financial year cycle not found', 404);
+        }
+
+        $count = $this->closeReportService->unlock($groupFinancialYear, $this->getUserId());
+
+        return $this->successResponse(['unlocked_count' => $count], 'Close reports unlocked successfully');
+    }
+
     protected function findGroupFinancialYear(int $groupId, int $groupFinancialYearId): ?KikobaGroupFinancialYear
     {
         $group = KikobaGroup::where('company_id', $this->getCompanyId())->find($groupId);

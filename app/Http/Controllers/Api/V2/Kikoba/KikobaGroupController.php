@@ -462,20 +462,19 @@ class KikobaGroupController extends BaseController
             return $this->errorResponse('This financial year cycle is already closed', 422);
         }
 
-        $reports = DB::transaction(function () use ($gfy) {
-            // Ensure the close report reflects every contribution up to this point
-            $reports = $this->closeReportService->generate($gfy, $this->getUserId());
-
-            $this->closeReportService->finalize($gfy, $this->getUserId());
+        DB::transaction(function () use ($gfy) {
+            // A draft payout report is ready to review the moment the cycle
+            // closes, but locking it is always a separate, explicit action
+            // (see KikobaReportController::finalizeCloseReport) — closing
+            // the cycle itself must never silently lock the payout figures.
+            $this->closeReportService->generate($gfy, $this->getUserId());
 
             $gfy->update(['status' => 'closed']);
-
-            return $reports;
         });
 
         return $this->successResponse(
             $gfy->fresh()->load('closeReports.groupMember.member'),
-            'Financial year cycle closed and payout report finalized successfully'
+            'Financial year cycle closed and a draft payout report generated'
         );
     }
 
