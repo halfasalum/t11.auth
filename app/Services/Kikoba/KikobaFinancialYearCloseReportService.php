@@ -10,9 +10,10 @@ use App\Models\KikobaLoan;
 use App\Models\KikobaMemberProductYearSummary;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 class KikobaFinancialYearCloseReportService
-{  
+{
     public function __construct(protected KikobaMemberProductSummaryService $summaryService)
     {
     }
@@ -26,10 +27,16 @@ class KikobaFinancialYearCloseReportService
      *   - total_payout: savings + profit
      *
      * Regenerates the underlying product-year summaries first, so the
-     * report always reflects the latest contributions.
+     * report always reflects the latest contributions. Refuses to run once
+     * this cycle has been finalized — see finalize() for the one place a
+     * finalized cycle's figures are still allowed to be (re)computed.
+     *
+     * @throws InvalidArgumentException when this cycle is already finalized
      */
     public function generate(KikobaGroupFinancialYear $groupFinancialYear, ?int $generatedBy = null): Collection
     {
+        $this->assertNotFinalized($groupFinancialYear);
+
         return DB::transaction(function () use ($groupFinancialYear, $generatedBy) {
             $this->summaryService->generate($groupFinancialYear);
 
@@ -132,15 +139,24 @@ class KikobaFinancialYearCloseReportService
 
     /**
      * Mark draft reports for a cycle as finalized, locking the payout
-     * figures in for disbursement. Regenerates one last time first so the
+     * figures in for disbursement — once locked, generate() refuses to
+     * touch this cycle again. Regenerates one last time first so the
      * locked-in figures reflect anything that changed since the draft was
      * last reviewed, then permanently claims whatever loan interest was
      * just distributed — via KikobaLoan.interest_claimed_amount — so it can
      * never be pooled into a future close again.
+     *
+     * Idempotent: calling this again on an already-finalized cycle is a
+     * no-op (returns 0) rather than an error, and never re-generates or
+     * re-claims — the lock, once set, is never bypassed.
      */
     public function finalize(KikobaGroupFinancialYear $groupFinancialYear, ?int $finalizedBy = null): int
     {
         return DB::transaction(function () use ($groupFinancialYear, $finalizedBy) {
+            if ($this->isFinalized($groupFinancialYear)) {
+                return 0;
+            }
+
             $this->generate($groupFinancialYear, $finalizedBy);
 
             [, , $claimableByLoan] = $this->loanInterestData($groupFinancialYear->group);
@@ -168,6 +184,27 @@ class KikobaFinancialYearCloseReportService
                     'generated_by' => $finalizedBy,
                 ]);
         });
+    }
+
+    /**
+     * Whether this cycle already has a locked-in (finalized) report — once
+     * true, generate() refuses to recompute it and finalize() becomes a
+     * no-op instead of re-locking.
+     */
+    public function isFinalized(KikobaGroupFinancialYear $groupFinancialYear): bool
+    {
+        return KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
+            ->where('status', 'finalized')
+            ->exists();
+    }
+
+    protected function assertNotFinalized(KikobaGroupFinancialYear $groupFinancialYear): void
+    {
+        if ($this->isFinalized($groupFinancialYear)) {
+            throw new InvalidArgumentException(
+                'This financial-year cycle has already been finalized and is locked — reports can no longer be regenerated.'
+            );
+        }
     }
 
     /**

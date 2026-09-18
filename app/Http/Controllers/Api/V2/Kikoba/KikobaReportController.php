@@ -10,6 +10,7 @@ use App\Models\KikobaMemberProductYearSummary;
 use App\Services\Kikoba\KikobaFinancialYearCloseReportService;
 use App\Services\Kikoba\KikobaMemberProductSummaryService;
 use Illuminate\Http\Request;
+use InvalidArgumentException;
 
 class KikobaReportController extends BaseController
 {
@@ -81,7 +82,11 @@ class KikobaReportController extends BaseController
             return $this->errorResponse('Financial year cycle not found', 404);
         }
 
-        $reports = $this->closeReportService->generate($groupFinancialYear, $this->getUserId());
+        try {
+            $reports = $this->closeReportService->generate($groupFinancialYear, $this->getUserId());
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
 
         return $this->successResponse($reports, 'Close report generated successfully');
     }
@@ -110,6 +115,7 @@ class KikobaReportController extends BaseController
                 'total_profit_amount' => round($reports->sum('profit_amount'), 2),
                 'total_payout' => round($reports->sum('total_payout'), 2),
             ],
+            'is_finalized' => $this->closeReportService->isFinalized($groupFinancialYear),
         ]);
     }
 
