@@ -3,8 +3,10 @@
 namespace App\Services\Kikoba;
 
 use App\Models\KikobaFinancialYearCloseReport;
+use App\Models\KikobaGroup;
 use App\Models\KikobaGroupFinancialYear;
 use App\Models\KikobaGroupProduct;
+use App\Models\KikobaLoan;
 use App\Models\KikobaMemberProductYearSummary;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -59,6 +61,11 @@ class KikobaFinancialYearCloseReportService
                 ->groupBy('kikoba_group_product_id')
                 ->map(fn ($rows) => (float) $rows->sum('total_paid_amount'));
 
+            // Loan interest that's accrued/collected (per each product's
+            // interest_recognition rule) but not yet locked into a prior
+            // closure — see loanInterestData() for how "claimable" is derived.
+            [$loanProductsById, $loanInterestPools] = $this->loanInterestData($group);
+
             $reports = collect();
 
             foreach ($activeMembers as $groupMember) {
@@ -76,13 +83,24 @@ class KikobaFinancialYearCloseReportService
                     ->where('product_type', 'share')
                     ->sum('total_paid_amount');
 
-                [$profitAmount, $breakdown] = $this->calculateProfit(
+                [$productProfitAmount, $productBreakdown] = $this->calculateProfit(
                     $incomeGroupProducts,
                     $incomePools,
                     $totalShareUnits,
                     $totalShareUnitsInGroup,
                     $activeMemberCount
                 );
+
+                [$loanProfitAmount, $loanBreakdown] = $this->calculateLoanInterestProfit(
+                    $loanProductsById,
+                    $loanInterestPools,
+                    $totalShareUnits,
+                    $totalShareUnitsInGroup,
+                    $activeMemberCount
+                );
+
+                $profitAmount = $productProfitAmount + $loanProfitAmount;
+                $breakdown = array_merge($productBreakdown, $loanBreakdown);
 
                 $totalPayout = round($totalSavingsAmount + $profitAmount, 2);
 
@@ -114,17 +132,182 @@ class KikobaFinancialYearCloseReportService
 
     /**
      * Mark draft reports for a cycle as finalized, locking the payout
-     * figures in for disbursement.
+     * figures in for disbursement. Regenerates one last time first so the
+     * locked-in figures reflect anything that changed since the draft was
+     * last reviewed, then permanently claims whatever loan interest was
+     * just distributed — via KikobaLoan.interest_claimed_amount — so it can
+     * never be pooled into a future close again.
      */
     public function finalize(KikobaGroupFinancialYear $groupFinancialYear, ?int $finalizedBy = null): int
     {
-        return KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
-            ->where('status', 'draft')
-            ->update([
-                'status' => 'finalized',
-                'finalized_at' => now(),
-                'generated_by' => $finalizedBy,
-            ]);
+        return DB::transaction(function () use ($groupFinancialYear, $finalizedBy) {
+            $this->generate($groupFinancialYear, $finalizedBy);
+
+            [, , $claimableByLoan] = $this->loanInterestData($groupFinancialYear->group);
+
+            if (! empty($claimableByLoan)) {
+                KikobaLoan::whereIn('id', array_keys($claimableByLoan))
+                    ->get()
+                    ->each(function (KikobaLoan $loan) use ($claimableByLoan, $groupFinancialYear) {
+                        $loan->update([
+                            'interest_claimed_amount' => round(
+                                (float) $loan->interest_claimed_amount + $claimableByLoan[$loan->id],
+                                2
+                            ),
+                            'last_claimed_financial_year_id' => $groupFinancialYear->id,
+                            'interest_claimed_at' => now(),
+                        ]);
+                    });
+            }
+
+            return KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
+                ->where('status', 'draft')
+                ->update([
+                    'status' => 'finalized',
+                    'finalized_at' => now(),
+                    'generated_by' => $finalizedBy,
+                ]);
+        });
+    }
+
+    /**
+     * For every loan this group has disbursed, work out how much of its
+     * interest is claimable right now: what's recognized as income under
+     * its product's interest_recognition rule, minus whatever has already
+     * been locked into a past closure (interest_claimed_amount). Grouped by
+     * loan product so each product's pool can be split per its own
+     * interest_distribution rule, mirroring how product-income pools are
+     * kept separate in generate().
+     *
+     * @return array{0: Collection<int, \App\Models\KikobaLoanProduct>, 1: array<int, float>, 2: array<int, float>}
+     *         [loan products by id, pool amount by loan_product_id, claimable amount by loan_id]
+     */
+    protected function loanInterestData(KikobaGroup $group): array
+    {
+        $loans = KikobaLoan::with(['loanProduct', 'schedules'])
+            ->where('kikoba_group_id', $group->id)
+            ->whereNotNull('disbursed_at')
+            ->get();
+
+        $productsById = collect();
+        $poolsByProduct = [];
+        $claimableByLoan = [];
+
+        foreach ($loans as $loan) {
+            $product = $loan->loanProduct;
+
+            if (! $product) {
+                continue;
+            }
+
+            $claimable = round($this->eligibleInterestFor($loan, $product) - (float) $loan->interest_claimed_amount, 2);
+
+            if ($claimable <= 0) {
+                continue;
+            }
+
+            $claimableByLoan[$loan->id] = $claimable;
+            $poolsByProduct[$product->id] = round(($poolsByProduct[$product->id] ?? 0) + $claimable, 2);
+            $productsById->put($product->id, $product);
+        }
+
+        return [$productsById, $poolsByProduct, $claimableByLoan];
+    }
+
+    /**
+     * How much of this loan's interest counts as recognized income right
+     * now, under its product's interest_recognition rule. This is the
+     * running total ever recognized, not a per-cycle delta — the caller
+     * subtracts interest_claimed_amount to get what's still claimable.
+     */
+    protected function eligibleInterestFor(KikobaLoan $loan, \App\Models\KikobaLoanProduct $product): float
+    {
+        return match ($product->interest_recognition) {
+            'on_disbursement' => (float) ($loan->interest_total ?? 0),
+            'on_completion' => in_array($loan->status, ['completed', 'early_settled'], true)
+                ? (float) ($loan->interest_total ?? 0)
+                : 0.0,
+            'cash_collected' => $this->collectedInterestFor($loan),
+            default => 0.0,
+        };
+    }
+
+    /**
+     * Actual cash-basis interest collected so far: the upfront lump (once
+     * disbursed) plus, for each schedule installment, the interest portion
+     * of whatever's been paid against it — assumed proportional to that
+     * installment's principal/interest split, since payments aren't
+     * recorded as covering one before the other.
+     */
+    protected function collectedInterestFor(KikobaLoan $loan): float
+    {
+        $collected = (float) $loan->upfront_interest_amount;
+
+        foreach ($loan->schedules as $schedule) {
+            $total = (float) $schedule->total_amount;
+
+            if ($total <= 0) {
+                continue;
+            }
+
+            $collected += (float) $schedule->paid_amount * ((float) $schedule->interest_amount / $total);
+        }
+
+        return round($collected, 2);
+    }
+
+    /**
+     * Same distribution math as calculateProfit(), applied to loan-interest
+     * pools (grouped by loan product) instead of product-income pools.
+     *
+     * @return array{0: float, 1: array} [profit amount, calculation breakdown]
+     */
+    protected function calculateLoanInterestProfit(
+        Collection $loanProductsById,
+        array $poolsByProduct,
+        int $memberShareUnits,
+        int $totalShareUnitsInGroup,
+        int $activeMemberCount
+    ): array {
+        $profitAmount = 0.0;
+        $breakdown = [];
+
+        foreach ($loanProductsById as $product) {
+            $poolAmount = (float) ($poolsByProduct[$product->id] ?? 0);
+
+            if ($poolAmount <= 0) {
+                continue;
+            }
+
+            $rule = $product->interest_distribution;
+            $memberShare = 0.0;
+
+            if ($rule === 'flat_rate') {
+                $memberShare = $activeMemberCount > 0
+                    ? $poolAmount / $activeMemberCount
+                    : 0.0;
+            } elseif ($rule === 'share_value') {
+                $memberShare = $totalShareUnitsInGroup > 0
+                    ? $poolAmount * ($memberShareUnits / $totalShareUnitsInGroup)
+                    : 0.0;
+            }
+
+            $profitAmount += $memberShare;
+
+            $breakdown[] = [
+                'source' => 'loan_interest',
+                'loan_product_id' => $product->id,
+                'product_name' => $product->name,
+                'calculation' => $rule,
+                'pool_amount' => round($poolAmount, 2),
+                'total_share_units_in_group' => $rule === 'share_value' ? $totalShareUnitsInGroup : null,
+                'member_share_units' => $rule === 'share_value' ? $memberShareUnits : null,
+                'active_member_count' => $rule === 'flat_rate' ? $activeMemberCount : null,
+                'member_share' => round($memberShare, 2),
+            ];
+        }
+
+        return [$profitAmount, $breakdown];
     }
 
     /**
@@ -163,6 +346,7 @@ class KikobaFinancialYearCloseReportService
             $profitAmount += $memberShare;
 
             $breakdown[] = [
+                'source' => 'product_income',
                 'group_product_id' => $groupProduct->id,
                 'product_name' => $groupProduct->product->name,
                 'calculation' => $rule,

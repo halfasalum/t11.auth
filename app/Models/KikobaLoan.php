@@ -17,6 +17,7 @@ class KikobaLoan extends Model
         'loan_period', 'purpose', 'document_path', 'notes', 'status', 'applied_by',
         'approved_amount', 'disbursement_amount', 'upfront_interest_amount', 'start_date', 'approved_by', 'approved_at',
         'disbursed_at', 'disbursed_by',
+        'interest_claimed_amount', 'last_claimed_financial_year_id', 'interest_claimed_at',
         'closed_at', 'closed_by', 'closure_reason',
         'rejected_by', 'rejected_at', 'rejection_reason',
     ];
@@ -29,12 +30,14 @@ class KikobaLoan extends Model
         'approved_amount' => 'decimal:2',
         'disbursement_amount' => 'decimal:2',
         'upfront_interest_amount' => 'decimal:2',
+        'interest_claimed_amount' => 'decimal:2',
         'loan_period' => 'integer',
         'start_date' => 'date:Y-m-d',
         'approved_at' => 'datetime',
         'disbursed_at' => 'datetime',
         'closed_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'interest_claimed_at' => 'datetime',
     ];
 
     protected $appends = ['interest_total', 'total_loan', 'paid_amount', 'balance', 'is_overdue', 'overdue_amount'];
@@ -172,5 +175,10 @@ class KikobaLoan extends Model
     public function schedules(): HasMany
     {
         return $this->hasMany(KikobaLoanSchedule::class)->orderBy('installment_no');
+    }
+
+    public function lastClaimedFinancialYear(): BelongsTo
+    {
+        return $this->belongsTo(KikobaGroupFinancialYear::class, 'last_claimed_financial_year_id');
     }
 }

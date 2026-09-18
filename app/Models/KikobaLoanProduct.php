@@ -14,6 +14,7 @@ class KikobaLoanProduct extends Model
     protected $fillable = [
         'company_id', 'name', 'description',
         'interest_mode', 'interest_rate', 'interest_amount', 'interest_application',
+        'interest_distribution', 'interest_recognition',
         'min_loan_amount', 'max_loan_amount',
         'min_loan_period', 'max_loan_period', 'loan_period_unit',
         'repayment_interval', 'repayment_interval_unit',

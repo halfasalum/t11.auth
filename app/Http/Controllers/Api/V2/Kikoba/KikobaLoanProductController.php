@@ -107,6 +107,8 @@ class KikobaLoanProductController extends BaseController
             'interest_rate' => 'nullable|required_if:interest_mode,percentage|numeric|min:0',
             'interest_amount' => 'nullable|required_if:interest_mode,fixed|numeric|min:0',
             'interest_application' => 'sometimes|in:add_on,deducted_upfront',
+            'interest_distribution' => 'sometimes|in:flat_rate,share_value',
+            'interest_recognition' => 'sometimes|in:on_disbursement,on_completion,cash_collected',
 
             'min_loan_amount' => "{$req}|numeric|min:0",
             'max_loan_amount' => 'nullable|numeric|gte:min_loan_amount',
