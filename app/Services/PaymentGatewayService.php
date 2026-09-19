@@ -123,6 +123,15 @@ class PaymentGatewayService
      */
     public function initiateMnoCheckout(string $msisdn, float $amount, string $provider, string $externalId): array
     {
+        if (empty($this->checkoutBaseUrl)) {
+            return [
+                'success' => false,
+                'error' => 'services.payment_gateway.checkout_base_url is not configured on this server — '
+                    . 'set PAYMENT_GATEWAY_CHECKOUT_BASE_URL in .env (or deploy the config/services.php update '
+                    . 'that added it) rather than letting the request go out with no host.',
+            ];
+        }
+
         $tokenResult = $this->getValidToken();
 
         if (! ($tokenResult['success'] ?? false)) {
