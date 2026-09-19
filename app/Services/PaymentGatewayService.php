@@ -11,6 +11,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 class PaymentGatewayService
 {
     protected $baseUrl;
+    protected $checkoutBaseUrl;
     protected $clientId;
     protected $clientSecret;
     protected $appName;
@@ -18,6 +19,7 @@ class PaymentGatewayService
     public function __construct()
     {
         $this->baseUrl = config('services.payment_gateway.base_url');
+        $this->checkoutBaseUrl = config('services.payment_gateway.checkout_base_url');
         $this->clientId = config('services.payment_gateway.client_id');
         $this->clientSecret = config('services.payment_gateway.client_secret');
         $this->appName = config('services.payment_gateway.app_name');
@@ -94,19 +96,100 @@ class PaymentGatewayService
         ->first();
 
         if ($token && $token->isValid()) {
-            /* return [
+            return [
                 'success' => true,
                 'data' => [
                     'access_token' => $token->access_token,
                     'expires_at' => $token->expires_at,
                 ],
-            ]; */
-            return [
-                'success' => true,
-                'token' => $token->access_token,
             ];
         }
 
         return $this->generateToken();
+    }
+
+    /**
+     * Push a mobile-money checkout request (M-Pesa, Mixx by Yas/Tigo, Airtel
+     * Money, HaloPesa) to the given number — this triggers a USSD PIN
+     * prompt on the customer's phone. The actual payment result arrives
+     * later via AzamPay's callback, not in this response; a 'pending'
+     * result here only means the push was accepted, not that money moved.
+     *
+     * @param string $msisdn Local (0xxx) or international (255xxx) format
+     * @param float $amount
+     * @param string $provider One of: Mpesa, Tigo, Airtel, Halopesa, Azampesa
+     * @param string $externalId Our own idempotency key for this attempt
+     * @return array{success: bool, data?: array, error?: string}
+     */
+    public function initiateMnoCheckout(string $msisdn, float $amount, string $provider, string $externalId): array
+    {
+        $tokenResult = $this->getValidToken();
+
+        if (! ($tokenResult['success'] ?? false)) {
+            return [
+                'success' => false,
+                'error' => $tokenResult['error'] ?? 'Could not obtain a payment gateway token',
+            ];
+        }
+
+        $accessToken = $tokenResult['data']['access_token'];
+
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => "Bearer {$accessToken}",
+                'X-API-KEY' => $accessToken,
+            ])->post("{$this->checkoutBaseUrl}/azampay/mno/checkout", [
+                'accountNumber' => $this->normalizeMsisdn($msisdn),
+                'amount' => (string) $amount,
+                'currency' => 'TZS',
+                'externalId' => $externalId,
+                'provider' => $provider,
+            ]);
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                ];
+            }
+
+            return [
+                'success' => false,
+                'error' => 'Checkout request failed: ' . $response->body(),
+            ];
+        } catch (RequestException $e) {
+            return [
+                'success' => false,
+                'error' => 'Request failed: ' . $e->getMessage(),
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Unexpected error: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Local (0xxxxxxxxx) or already-international (255xxxxxxxxx / +255...)
+     * input, normalized to the 255xxxxxxxxx form AzamPay expects.
+     */
+    public function normalizeMsisdn(string $phone): string
+    {
+        $digits = preg_replace('/[^0-9]/', '', $phone);
+
+        if (strlen($digits) === 10 && str_starts_with($digits, '0')) {
+            return '255' . substr($digits, 1);
+        }
+
+        if (strlen($digits) === 9) {
+            return '255' . $digits;
+        }
+
+        if (strlen($digits) === 12 && str_starts_with($digits, '255')) {
+            return $digits;
+        }
+
+        return $digits;
     }
 }

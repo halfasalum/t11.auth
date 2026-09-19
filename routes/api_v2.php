@@ -60,6 +60,10 @@ Route::post('/logout', [AuthController::class, 'logout'])->middleware('jwt.auth'
 Route::post('/change-password', [AuthController::class, 'changePassword'])->middleware('jwt.auth');
 Route::get('/registration/plans', [SubscriptionController::class, 'getPlans']);
 
+// AzamPay calls this server-to-server after a mobile-money checkout
+// resolves — must stay outside jwt.auth, AzamPay isn't a logged-in user.
+Route::post('/subscription/azampay/callback', [SubscriptionController::class, 'azampayCallback']);
+
 
 
 Route::prefix('register')->group(function () {
@@ -91,6 +95,7 @@ Route::middleware([JwtMiddleware::class])->group(function () {
         Route::post('/order', [SubscriptionController::class, 'submitOrder']);
         Route::get('/orders', [SubscriptionController::class, 'getOrderHistory']);
         Route::get('/orders/{id}', [SubscriptionController::class, 'getOrder']);
+        Route::get('/orders/{id}/payment-status', [SubscriptionController::class, 'paymentStatus']);
     });
 });
 Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group(function () {

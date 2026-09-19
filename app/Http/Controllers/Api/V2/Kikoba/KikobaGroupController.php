@@ -13,6 +13,7 @@ use App\Models\KikobaGroupMemberProduct;
 use App\Models\KikobaGroupProduct;
 use App\Services\Kikoba\KikobaFinancialYearCloseReportService;
 use App\Services\Kikoba\KikobaScheduleGeneratorService;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -764,7 +765,7 @@ class KikobaGroupController extends BaseController
         return $this->successResponse($data);
     }
 
-    public function processGroupSchedulePayments(Request $request)
+    public function processGroupSchedulePayments(Request $request, NotificationService $notificationService)
     {
         $validated = $request->validate([
             'due_date'          => 'required|date',
@@ -785,6 +786,7 @@ class KikobaGroupController extends BaseController
             ->where('status', 'pending')
             ->with([
                 'memberProduct.groupMember.member',
+                'memberProduct.groupMember.group',
                 'memberProduct.groupProduct.product'
             ])
             ->get()
@@ -792,6 +794,11 @@ class KikobaGroupController extends BaseController
 
         $processed = collect();
         $errors    = collect();
+
+        // Per-member running totals for this batch, keyed by kikoba_member_id,
+        // so a member with both a share and a savings row processed together
+        // gets ONE consolidated SMS afterwards instead of one per row.
+        $memberTotals = [];
 
         foreach ($scheduleData as $item) {
             $scheduleId = $item['schedule_id'];
@@ -842,10 +849,56 @@ class KikobaGroupController extends BaseController
                 'amount_paid'  => $paidAmount,
                 'new_status'   => $schedule->fresh()->status,
             ]);
+
+            $member = $schedule->memberProduct?->groupMember?->member;
+
+            if ($member && $paidAmount > 0) {
+                $memberId = $member->id;
+
+                if (!isset($memberTotals[$memberId])) {
+                    $memberTotals[$memberId] = [
+                        'name'  => $member->full_name ?? trim(($member->first_name ?? '') . ' ' . ($member->last_name ?? '')),
+                        'phone' => $member->phone,
+                        'group_name' => $schedule->memberProduct?->groupMember?->group?->name ?? '',
+                        'share'   => 0.0,
+                        'saving'  => 0.0,
+                        'penalty' => 0.0,
+                        'other'   => 0.0,
+                    ];
+                }
+
+                $productType = $schedule->memberProduct?->groupProduct?->product?->product_type;
+                $bucket = in_array($productType, ['share', 'saving', 'penalty'], true) ? $productType : 'other';
+                $memberTotals[$memberId][$bucket] += $paidAmount;
+            }
         }
 
         if ($processed->isEmpty()) {
             return $this->errorResponse('No valid payments were processed', 400);
+        }
+
+        $smsSent = 0;
+        $smsFailed = 0;
+
+        foreach ($memberTotals as $totals) {
+            if (empty($totals['phone'])) {
+                continue;
+            }
+
+            $message = $this->buildContributionSmsMessage(
+                $totals['name'],
+                $dueDate,
+                (float) $totals['share'],
+                (float) $totals['saving'],
+                (float) $totals['penalty'],
+                $totals['group_name']
+            );
+
+            if ($notificationService->sendSMS($totals['phone'], $message, $totals['group_name'])) {
+                $smsSent++;
+            } else {
+                $smsFailed++;
+            }
         }
 
         return $this->successResponse([
@@ -853,6 +906,42 @@ class KikobaGroupController extends BaseController
             'processed_count' => $processed->count(),
             'processed'     => $processed,
             'errors'        => $errors,
+            'sms_sent'      => $smsSent,
+            'sms_failed'    => $smsFailed,
         ]);
+    }
+
+    /**
+     * Swahili SMS summarizing one member's bulk-payment batch — their share
+     * and savings contributions (the two the member actually cares about
+     * tracking), a penalty line only when one was collected, and a total.
+     */
+    private function buildContributionSmsMessage(
+        string $name,
+        string $date,
+        float $share,
+        float $saving,
+        float $penalty,
+        string $groupName
+    ): string {
+        $formattedDate = Carbon::parse($date)->format('d/m/Y');
+        $total = $share + $saving + $penalty;
+
+        $lines = ["Habari {$name},", "Mchango wako wa tarehe {$formattedDate} umepokelewa:"];
+
+        if ($share > 0) {
+            $lines[] = 'Hisa: TSh ' . number_format($share, 0);
+        }
+        if ($saving > 0) {
+            $lines[] = 'Akiba: TSh ' . number_format($saving, 0);
+        }
+        if ($penalty > 0) {
+            $lines[] = 'Adhabu: TSh ' . number_format($penalty, 0);
+        }
+
+        $lines[] = 'Jumla: TSh ' . number_format($total, 0);
+        $lines[] = 'Asante' . ($groupName ? " - {$groupName}" : '') . '.';
+
+        return implode("\n", $lines);
     }
 }

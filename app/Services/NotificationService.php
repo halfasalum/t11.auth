@@ -19,13 +19,30 @@ class NotificationService
         try {
             // Validate phone number format
             $phone = $this->formatPhoneNumber($phone);
-            
+
+            // Beem rejects (400 API_UNSUPPORTED_VALUE) any message containing
+            // a character outside the plain GSM 7-bit alphabet unless Unicode
+            // encoding is explicitly requested — normalize the common "smart"
+            // punctuation callers reach for by habit (em/en dashes, curly
+            // quotes, ellipsis) to their plain-ASCII equivalents so this
+            // never has to depend on getting an unconfirmed encoding value
+            // right, and messages stay in the cheaper 160-char GSM7 segments
+            // instead of Unicode's 70-char ones.
+            $message = $this->normalizeToGsm7($message);
+
             // Log SMS attempt
             Log::info('Sending SMS', [
                 'phone' => $phone,
                 'message' => $message,
                 'company' => $company
             ]);
+
+            if (! $this->isGsm7Safe($message)) {
+                Log::warning('SMS message still contains non-GSM7 characters after normalization — Beem may reject it', [
+                    'phone' => $phone,
+                    'message' => $message,
+                ]);
+            }
 
             $api_key = config('services.beem.api_key', '26fba7e5c594adf4');
             $secret_key = config('services.beem.secret_key', 'NTAzMTYyMDIwZWU0ZDgxMDQ5NDcyNjRjOTk0OTg3ZTRlNTIyNDA1NzZhYTU3MjFmMjcxNzAyNzY0OGUwY2E2ZQ==');
@@ -104,6 +121,57 @@ class NotificationService
         }
         
         return $phone;
+    }
+
+    /**
+     * Replace common "smart"/typographic punctuation with the plain-ASCII
+     * equivalent GSM7 actually supports, so a caller reaching for an em
+     * dash or a curly quote (easy to do without thinking about it) doesn't
+     * silently fail against Beem. Not a full Unicode transliteration —
+     * just the handful of characters callers in this codebase realistically
+     * type.
+     */
+    private function normalizeToGsm7(string $message): string
+    {
+        $replacements = [
+            "\u{2014}" => '-',  // em dash —
+            "\u{2013}" => '-',  // en dash –
+            "\u{2018}" => "'",  // left single quote '
+            "\u{2019}" => "'",  // right single quote '
+            "\u{201C}" => '"',  // left double quote "
+            "\u{201D}" => '"',  // right double quote "
+            "\u{2026}" => '...', // ellipsis …
+            "\u{00A0}" => ' ',  // non-breaking space
+            "\u{2022}" => '-',  // bullet •
+        ];
+
+        return strtr($message, $replacements);
+    }
+
+    /**
+     * Whether every character in the message is in the GSM 03.38 default
+     * alphabet (the basic Latin letters/digits/punctuation Beem accepts
+     * without Unicode encoding). Used only to log a warning when
+     * normalizeToGsm7() couldn't clean up everything — this app has no
+     * confirmed way to safely request Unicode encoding from Beem, so a
+     * message that's still non-GSM7 at this point will likely still be
+     * rejected; better to know from the log than guess at an API value.
+     */
+    private function isGsm7Safe(string $message): bool
+    {
+        $gsm7Basic = "@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ ÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡"
+            . "ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+        $gsm7Extended = "{}[]~|€^\\";
+
+        $allowed = $gsm7Basic . $gsm7Extended;
+
+        for ($i = 0, $len = mb_strlen($message); $i < $len; $i++) {
+            if (! str_contains($allowed, mb_substr($message, $i, 1))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

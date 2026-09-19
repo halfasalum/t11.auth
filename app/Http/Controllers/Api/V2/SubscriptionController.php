@@ -6,13 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\CustomersZone;
+use App\Models\PaymentTransaction;
 use App\Models\Plan;
 use App\Models\Subscription;
 use App\Models\SubscriptionOrder;
 use App\Models\User;
 use App\Models\Zone;
+use App\Services\PaymentGatewayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
@@ -161,17 +164,31 @@ class SubscriptionController extends BaseController
 
 
     /**
-     * Submit subscription order with receipt
+     * Submit subscription order — either the existing manual path (bank
+     * receipt number + optional uploaded slip, awaiting admin approval) or
+     * a mobile-money push via AzamPay (see initiateMobileMoneyPayment()),
+     * selected by payment_method.
      */
     public function submitOrder(Request $request)
     {
-        $validator = Validator::make($request->all(), [
+        $paymentMethod = $request->input('payment_method', 'manual');
+
+        $rules = [
             'plan_id' => 'required|exists:plans,id',
-            'duration_months' => 'required|integer|min:1|max:60', // Added duration validation
-            'receipt_number' => 'required|string|max:255',
-            'payment_notes' => 'nullable|string|max:1000',
-            'receipt_file' => 'nullable|file|mimes:jpeg,png,jpg,pdf|max:5120',
-        ]);
+            'duration_months' => 'required|integer|min:1|max:60',
+            'payment_method' => 'nullable|in:manual,mobile_money',
+        ];
+
+        if ($paymentMethod === 'mobile_money') {
+            $rules['msisdn'] = 'required|string|min:9|max:13';
+            $rules['mno_provider'] = 'required|in:Mpesa,Tigo,Airtel,Halopesa,Azampesa';
+        } else {
+            $rules['receipt_number'] = 'required|string|max:255';
+            $rules['payment_notes'] = 'nullable|string|max:1000';
+            $rules['receipt_file'] = 'nullable|file|mimes:jpeg,png,jpg,pdf|max:5120';
+        }
+
+        $validator = Validator::make($request->all(), $rules);
 
         if ($validator->fails()) {
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
@@ -196,14 +213,15 @@ class SubscriptionController extends BaseController
                 'company_id' => $companyId,
                 'plan_id' => $request->plan_id,
                 'duration_months' => $durationMonths, // Add this column to migration
-                'receipt_number' => $request->receipt_number,
+                'receipt_number' => $paymentMethod === 'manual' ? $request->receipt_number : null,
                 'payment_notes' => $request->payment_notes,
                 'amount' => $totalAmount,
                 'subtotal' => $subtotal, // Add this column to migration
                 'discount' => $discount, // Add this column to migration
                 'currency' => 'TZS',
+                'payment_method' => $paymentMethod,
                 'status' => 'pending',
-                'payment_date' => now(),
+                'payment_date' => $paymentMethod === 'manual' ? now() : null,
             ]);
 
             // Handle receipt file upload
@@ -227,12 +245,66 @@ class SubscriptionController extends BaseController
             $order->subscription_id = $subscription->id;
             $order->save();
 
+            $paymentTransaction = null;
+
+            if ($paymentMethod === 'mobile_money') {
+                $paymentTransaction = PaymentTransaction::create([
+                    'company_id' => $companyId,
+                    'subscription_order_id' => $order->id,
+                    'provider' => 'azampay',
+                    'payment_method' => 'mobile_money',
+                    'mno_provider' => $request->mno_provider,
+                    'msisdn' => $request->msisdn,
+                    'amount' => $totalAmount,
+                    'currency' => 'TZS',
+                    'status' => 'pending',
+                    'initiated_at' => now(),
+                ]);
+            }
+
             DB::commit();
+
+            // The AzamPay call is a real external side-effect (it pushes a
+            // PIN prompt to the customer's phone) — it must only happen
+            // AFTER our own records are durably committed, never inside the
+            // transaction above, so a later unrelated failure can't roll
+            // back records for a push that's already been sent.
+            if ($paymentMethod === 'mobile_money') {
+                $gateway = app(PaymentGatewayService::class);
+                $result = $gateway->initiateMnoCheckout(
+                    $request->msisdn,
+                    $totalAmount,
+                    $request->mno_provider,
+                    $paymentTransaction->external_id
+                );
+
+                if (! ($result['success'] ?? false)) {
+                    $paymentTransaction->update([
+                        'status' => 'failed',
+                        'status_message' => $result['error'] ?? 'Unknown gateway error',
+                    ]);
+
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Could not start the mobile money payment: ' . ($result['error'] ?? 'Unknown error'),
+                        'data' => $order->fresh()->load(['plan', 'company']),
+                        'payment_transaction' => $paymentTransaction->fresh(),
+                    ], 502);
+                }
+
+                $providerTxId = data_get($result, 'data.transactionId') ?? data_get($result, 'data.data.transactionId');
+                if ($providerTxId) {
+                    $paymentTransaction->update(['provider_transaction_id' => $providerTxId]);
+                }
+            }
 
             return response()->json([
                 'success' => true,
-                'message' => 'Subscription order submitted successfully. Awaiting admin approval.',
-                'data' => $order->load(['plan', 'company'])
+                'message' => $paymentMethod === 'mobile_money'
+                    ? 'Payment request sent. Check your phone and enter your PIN to complete the payment.'
+                    : 'Subscription order submitted successfully. Awaiting admin approval.',
+                'data' => $order->fresh()->load(['plan', 'company']),
+                'payment_transaction' => $paymentTransaction?->fresh(),
             ], 201);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -240,6 +312,168 @@ class SubscriptionController extends BaseController
                 'success' => false,
                 'message' => 'Failed to submit order: ' . $e->getMessage()
             ], 500);
+        }
+    }
+
+    /**
+     * Poll target for the frontend while waiting on a mobile-money push —
+     * returns the latest payment_transaction status for a company's own
+     * order (never another company's).
+     */
+    public function paymentStatus($orderId)
+    {
+        $companyId = $this->getCompanyId();
+
+        $order = SubscriptionOrder::where('company_id', $companyId)
+            ->with(['paymentTransactions' => fn ($q) => $q->limit(1)])
+            ->find($orderId);
+
+        if (! $order) {
+            return response()->json(['success' => false, 'message' => 'Order not found'], 404);
+        }
+
+        $transaction = $order->paymentTransactions->first();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'order_status' => $order->status,
+                'payment_status' => $transaction->status ?? null,
+                'status_message' => $transaction->status_message ?? null,
+            ],
+        ]);
+    }
+
+    /**
+     * AzamPay POSTs here once a mobile-money checkout resolves (success,
+     * failure, or timeout). Public route — not behind the JWT middleware,
+     * since AzamPay calls it server-to-server, not as a logged-in user.
+     *
+     * The exact payload shape and signature-verification scheme AzamPay
+     * uses have not been confirmed against the sandbox docs yet, so this
+     * logs the full raw body first (to nail down the real shape from a
+     * genuine sandbox callback) and only tries a handful of plausible key
+     * names for matching + status. On anything ambiguous it does NOT
+     * activate the subscription — a false negative just means an admin
+     * has to approve it manually from the payment_transactions/orders
+     * list; a false positive would hand out a paid plan for free.
+     */
+    public function azampayCallback(Request $request)
+    {
+        $payload = $request->all();
+
+        Log::info('AzamPay callback received', ['payload' => $payload]);
+
+        $externalId = $payload['externalId']
+            ?? $payload['external_id']
+            ?? $payload['reference']
+            ?? $payload['utilityref']
+            ?? null;
+
+        $providerTransactionId = $payload['transactionId']
+            ?? $payload['transactionid']
+            ?? $payload['msisdn_transactionId']
+            ?? null;
+
+        $transaction = null;
+
+        if ($externalId) {
+            $transaction = PaymentTransaction::where('external_id', $externalId)->first();
+        }
+        if (! $transaction && $providerTransactionId) {
+            $transaction = PaymentTransaction::where('provider_transaction_id', $providerTransactionId)->first();
+        }
+
+        if (! $transaction) {
+            Log::warning('AzamPay callback did not match any payment_transaction', ['payload' => $payload]);
+            // Still 200 — AzamPay should not retry-storm us over a payload
+            // shape we can't yet match; the raw body is logged for review.
+            return response()->json(['success' => true]);
+        }
+
+        $transaction->update([
+            'raw_callback' => $payload,
+            'provider_transaction_id' => $providerTransactionId ?? $transaction->provider_transaction_id,
+        ]);
+
+        $rawStatus = strtolower((string) (
+            $payload['transactionstatus'] ?? $payload['transactionStatus'] ?? $payload['status'] ?? ''
+        ));
+        $isSuccess = in_array($rawStatus, ['success', 'successful', 'completed', 'true'], true);
+        $isFailure = in_array($rawStatus, ['failed', 'failure', 'cancelled', 'canceled', 'false'], true);
+
+        if ($isSuccess) {
+            $transaction->update(['status' => 'success', 'completed_at' => now()]);
+            $this->activateOrderFromMobileMoneyPayment($transaction);
+        } elseif ($isFailure) {
+            $transaction->update(['status' => 'failed', 'completed_at' => now(), 'status_message' => $rawStatus]);
+        } else {
+            Log::warning('AzamPay callback status not recognized — leaving as pending for manual review', [
+                'transaction_id' => $transaction->id,
+                'raw_status' => $rawStatus,
+            ]);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Mirrors the subscription-activation half of approveOrder() (order and
+     * subscription both flip to active, dates set from today), but for the
+     * automatic mobile-money path: no admin, start date is "now" rather
+     * than an admin-chosen date, and approved_by stays null (system, not a
+     * user, approved it).
+     */
+    private function activateOrderFromMobileMoneyPayment(PaymentTransaction $transaction): void
+    {
+        $order = $transaction->subscriptionOrder;
+
+        if (! $order || ! in_array($order->status, ['pending', 'verified'], true)) {
+            return;
+        }
+
+        DB::beginTransaction();
+        try {
+            $startDate = now();
+            $endDate = $startDate->copy()->addMonths($order->duration_months);
+
+            $order->status = 'approved';
+            $order->approved_at = now();
+            $order->start_date = $startDate;
+            $order->end_date = $endDate;
+            $order->admin_notes = 'Auto-approved via AzamPay mobile money payment ' . $transaction->transaction_number;
+            $order->save();
+
+            $subscription = Subscription::updateOrCreate(
+                ['company_id' => $order->company_id, 'subscription_order_id' => $order->id],
+                [
+                    'plan_id' => $order->plan_id,
+                    'status' => 'active',
+                    'start_date' => $startDate,
+                    'end_date' => $endDate,
+                    'features' => [
+                        'customer_limit' => $order->plan->customer_limit,
+                        'branch_limit' => $order->plan->branch_limit,
+                        'zone_limit' => $order->plan->zone_limit,
+                        'user_limit' => $order->plan->user_limit,
+                        'loan_limit' => $order->plan->loan_limit,
+                    ],
+                ]
+            );
+
+            Subscription::where('company_id', $order->company_id)
+                ->where('id', '!=', $subscription->id)
+                ->where('status', 'active')
+                ->update(['status' => 'expired']);
+
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Failed to auto-activate subscription after AzamPay payment', [
+                'order_id' => $order->id,
+                'transaction_id' => $transaction->id,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 

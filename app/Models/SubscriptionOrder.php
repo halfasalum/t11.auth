@@ -26,6 +26,7 @@ class SubscriptionOrder extends Model
         'payment_notes',
         'amount',
         'currency',
+        'payment_method',
         'status',
         'payment_date',
         'approved_by',
@@ -107,6 +108,11 @@ class SubscriptionOrder extends Model
     public function approvedBy()
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function paymentTransactions()
+    {
+        return $this->hasMany(PaymentTransaction::class)->orderByDesc('id');
     }
 
     // Scopes
