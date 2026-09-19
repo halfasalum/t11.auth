@@ -135,8 +135,19 @@ class KikobaAccountController extends BaseController
             return $this->errorResponse('Account not found', 404);
         }
 
-        $transactions = $account->transactions()
-            ->with('registeredBy:id,name,first_name,last_name')
+        $query = $account->transactions()->with('registeredBy:id,name,first_name,last_name');
+
+        if ($request->filled('start_date')) {
+            $query->where('transaction_date', '>=', $request->input('start_date'));
+        }
+        if ($request->filled('end_date')) {
+            $query->where('transaction_date', '<=', $request->input('end_date'));
+        }
+        if ($request->filled('source')) {
+            $query->where('source', $request->string('source'));
+        }
+
+        $transactions = $query->orderByDesc('transaction_date')->orderByDesc('id')
             ->paginate((int) $request->input('per_page', 20));
 
         return $this->successResponse($this->paginateResponse($transactions));

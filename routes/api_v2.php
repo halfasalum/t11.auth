@@ -549,6 +549,17 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/finalize', [KikobaReportController::class, 'finalizeCloseReport']);
         Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/unlock', [KikobaReportController::class, 'unlockCloseReport']);
 
+        // Member statement
+        Route::get('groups/{groupId}/members/{groupMemberId}/statement', [KikobaReportController::class, 'memberStatement']);
+
+        // Company-wide operational & insight reports
+        Route::get('reports/loan-portfolio', [KikobaReportController::class, 'loanPortfolio']);
+        Route::get('reports/contributions', [KikobaReportController::class, 'contributionReport']);
+        Route::get('reports/loan-aging', [KikobaReportController::class, 'loanAgingReport']);
+        Route::get('reports/income-statement', [KikobaReportController::class, 'incomeStatement']);
+        Route::get('reports/share-register', [KikobaReportController::class, 'shareRegister']);
+        Route::get('reports/penalties', [KikobaReportController::class, 'penaltyReport']);
+
 
         // Group members
         Route::get('groups/{groupId}/members', [KikobaGroupMemberController::class, 'index']);
