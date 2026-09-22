@@ -38,10 +38,10 @@ class OnboardingController extends BaseController
         return [
             21 => [
                 ['key' => 'role_creation', 'route' => '/settings/role'],
-                ['key' => 'user_creation', 'route' => '/users/register'],
-                ['key' => 'role_assignment', 'route' => '/users'],
                 ['key' => 'branch_creation', 'route' => '/settings/branch'],
                 ['key' => 'zone_creation', 'route' => '/settings/zone'],
+                ['key' => 'user_creation', 'route' => '/users/register'],
+                ['key' => 'role_assignment', 'route' => '/users'],
                 ['key' => 'user_allocation', 'route' => '/users'],
                 ['key' => 'bank_account_creation', 'route' => '/bank/register'],
             ],
