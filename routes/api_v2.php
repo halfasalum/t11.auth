@@ -32,6 +32,7 @@ use App\Http\Controllers\Api\V2\Reports\CustomerReportController;
 use App\Http\Controllers\Api\V2\Reports\FinancialReportController;
 use App\Http\Controllers\Api\V2\Reports\OperationalReportController;
 use App\Http\Controllers\Api\V2\Reports\PortfolioReportController;
+use App\Http\Controllers\Api\V2\OnboardingController;
 use App\Http\Controllers\Api\V2\SqlQueryController;
 use App\Http\Controllers\Api\V2\SubscriptionController;
 use App\Http\Controllers\Api\V2\UserActivityLogController;
@@ -86,6 +87,8 @@ Route::prefix('register')->group(function () {
 // ============================================
 
 Route::middleware([JwtMiddleware::class])->group(function () {
+
+    Route::get('/onboarding/status', [OnboardingController::class, 'status']);
 
     Route::prefix('subscription')->group(function () {
 
