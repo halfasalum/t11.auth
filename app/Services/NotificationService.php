@@ -247,6 +247,28 @@ class NotificationService
     }
 
     /**
+     * Send a subscription-expiry reminder to a company's own phone number
+     * (not a customer) — used by the daily app:notify-subscription-expiry
+     * scheduled job for the 14/7/3/0-days-remaining milestones.
+     */
+    public function sendSubscriptionExpirySMS($company, int $daysRemaining, string $endDate)
+    {
+        if ($daysRemaining <= 0) {
+            $message = "Habari {$company->company_name},\n\n" .
+                       "Usajili wako wa mfumo unaisha LEO (tarehe {$endDate}).\n" .
+                       "Tafadhali fanya malipo mara moja ili kuepuka kukatika kwa huduma.\n\n" .
+                       "Asante kwa kuendelea kutumia mfumo wetu.";
+        } else {
+            $message = "Habari {$company->company_name},\n\n" .
+                       "Usajili wako wa mfumo unaisha baada ya siku {$daysRemaining} (tarehe {$endDate}).\n" .
+                       "Tafadhali fanya malipo mapema ili kuendelea kutumia huduma bila kukatika.\n\n" .
+                       "Asante kwa kuchagua mfumo wetu.";
+        }
+
+        return $this->sendSMS($company->company_phone, $message, $company->company_name);
+    }
+
+    /**
      * Send overdue payment notification
      */
     public function sendOverduePaymentSMS($customer, $schedule, $company)
