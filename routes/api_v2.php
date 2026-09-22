@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V2\AIController;
 use App\Http\Controllers\Api\V2\CompanyRegistrationController;
+use App\Http\Controllers\Api\V2\Core\CompanySupportController;
 use App\Http\Controllers\Api\V2\SupportTicketController;
 use App\Http\Controllers\Api\V2\CustomerController;
 use App\Http\Controllers\Api\V2\Kikoba\KikobaAccountController;
@@ -364,6 +365,25 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
     Route::post("/module/register", [Modules::class, "register"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/company/register", [Company::class, "register"])->middleware([ControlAccessMiddleware::class . ':2']);
     Route::get("/companies", [Company::class, "list"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::put("/companies/{id}", [Company::class, "update"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::patch("/companies/{id}/toggle-status", [Company::class, "toggleStatus"])->middleware([ControlAccessMiddleware::class . ':2']);
+    Route::delete("/companies/{id}", [Company::class, "destroy"])->middleware([ControlAccessMiddleware::class . ':2']);
+
+    // Read-only "support view" into any company's data (super admin only).
+    // Every route below is a GET, deliberately — this exists purely so
+    // support staff can inspect a company while helping with a problem,
+    // never to change anything on its behalf.
+    Route::prefix('core/companies/{companyId}')->middleware([ControlAccessMiddleware::class . ':1'])->group(function () {
+        Route::get('/overview', [CompanySupportController::class, 'overview']);
+        Route::get('/customers', [CompanySupportController::class, 'customers']);
+        Route::get('/users', [CompanySupportController::class, 'users']);
+        Route::get('/roles', [CompanySupportController::class, 'roles']);
+        Route::get('/loans', [CompanySupportController::class, 'loans']);
+        Route::get('/branches', [CompanySupportController::class, 'branches']);
+        Route::get('/zones', [CompanySupportController::class, 'zones']);
+        Route::get('/products', [CompanySupportController::class, 'products']);
+        Route::get('/logs', [CompanySupportController::class, 'logs']);
+    });
     Route::post("/control/register", [Modules::class, "control_register"])->middleware([ControlAccessMiddleware::class . ':1']);
     Route::post("/module-control/register", [Modules::class, "control_register"])->middleware([ControlAccessMiddleware::class . ':11']);
     Route::get("/modules/list", [Modules::class, "listModules"])->middleware([ControlAccessMiddleware::class . ':1']);

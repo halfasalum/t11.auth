@@ -110,10 +110,93 @@ class Company extends Controller
     public function list()
     {
         $companies = ModelsCompany::where('company_status', '!=', 3)
-            ->select('id', 'company_name', 'company_phone', 'company_status', 'company_email', 'created_at')
+            ->select('id', 'company_name', 'company_phone', 'company_status', 'company_email', 'company_address', 'company_city', 'company_country', 'created_at')
             ->get();
         return response()->json(
             $companies
         );
+    }
+
+    /**
+     * Edit a company's own details. Deliberately excludes company_status —
+     * that's changed only via toggleStatus()/destroy() below, so an edit
+     * can never accidentally suspend or delete a company as a side effect.
+     */
+    public function update(Request $request, $id)
+    {
+        $company = ModelsCompany::where('id', $id)->where('company_status', '!=', 3)->first();
+        if (!$company) {
+            return response()->json(['status' => 'error', 'message' => 'Company not found'], 404);
+        }
+
+        try {
+            $validated = $request->validate([
+                'company_name' => 'bail|required|string|max:255|unique:companies,company_name,' . $id,
+                'company_email' => 'bail|required|email|max:255|unique:companies,company_email,' . $id,
+                'company_phone' => 'bail|required|string|max:20|unique:companies,company_phone,' . $id,
+                'company_address' => 'bail|nullable|string|max:255',
+                'company_city' => 'bail|nullable|string|max:255',
+                'company_country' => 'bail|nullable|string|max:255',
+            ]);
+
+            $company->update($validated);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Company updated successfully',
+                'data' => $company->only([
+                    'id', 'company_name', 'company_phone', 'company_email',
+                    'company_address', 'company_city', 'company_country',
+                    'company_status', 'created_at',
+                ]),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Flip between active (1) and suspended (2). Companies have no separate
+     * "suspended" status value in the shared statuses lookup — suspending a
+     * company is the same as marking it inactive.
+     */
+    public function toggleStatus($id)
+    {
+        $company = ModelsCompany::where('id', $id)->where('company_status', '!=', 3)->first();
+        if (!$company) {
+            return response()->json(['status' => 'error', 'message' => 'Company not found'], 404);
+        }
+
+        $newStatus = $company->company_status == 1 ? 2 : 1;
+        $company->update(['company_status' => $newStatus]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $newStatus == 1 ? 'Company activated' : 'Company suspended',
+            'data' => ['id' => $company->id, 'company_status' => $newStatus],
+        ]);
+    }
+
+    /**
+     * Soft delete — sets company_status = 3, same convention as every other
+     * status-column resource in this codebase (branches, zones, users). The
+     * row is never actually removed.
+     */
+    public function destroy($id)
+    {
+        $company = ModelsCompany::where('id', $id)->where('company_status', '!=', 3)->first();
+        if (!$company) {
+            return response()->json(['status' => 'error', 'message' => 'Company not found'], 404);
+        }
+
+        $company->update(['company_status' => 3]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Company deleted successfully',
+        ]);
     }
 }
