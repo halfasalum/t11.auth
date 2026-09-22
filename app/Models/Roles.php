@@ -11,5 +11,5 @@ class Roles extends Model
     protected $table = 'roles';
     protected $primaryKey = 'id';
     public $timestamps = true;
-    protected $fillable = ['role_name', 'company', 'status'];
+    protected $fillable = ['role_name', 'company', 'status', 'is_system_default'];
 }

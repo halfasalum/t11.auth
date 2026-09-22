@@ -100,14 +100,26 @@ class OnboardingController extends BaseController
         $companyUserIds = fn () => User::where('user_company', $companyId)->pluck('id');
 
         return match ($key) {
-            'role_creation' => Roles::where('company', $companyId)->where('status', 1)->exists(),
+            // Excludes the one "Company Admin" role registration auto-creates
+            // for every new company — only a role the manager created
+            // themselves through the Role Management screen counts.
+            'role_creation' => Roles::where('company', $companyId)
+                ->where('status', 1)
+                ->where('is_system_default', false)
+                ->exists(),
 
             'user_creation' => User::where('user_company', $companyId)
                 ->where('id', '!=', $userId)
                 ->where('status', '!=', 3)
                 ->exists(),
 
+            // Excludes registration's auto-assignment of "Company Admin" to
+            // the admin user — a role_id could still be the same one if the
+            // manager later assigns that very role to someone else through
+            // the Assign Role screen, since only THAT ROW is flagged, not
+            // every row referencing that role.
             'role_assignment' => users_roles::where('user_role_status', 1)
+                ->where('is_system_default', false)
                 ->whereIn('user_id', $companyUserIds())
                 ->exists(),
 

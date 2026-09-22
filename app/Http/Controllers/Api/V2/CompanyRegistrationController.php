@@ -95,6 +95,7 @@ class CompanyRegistrationController extends BaseController
                 'role_name' => 'Company Admin',
                 'company' => $company->id,
                 'status' => 1,
+                'is_system_default' => true,
             ]);
 
             $controls = [
@@ -145,6 +146,7 @@ class CompanyRegistrationController extends BaseController
                 'user_id' => $adminUser->id,
                 'role_id' => $adminRole->id,
                 'user_role_status' => 1,
+                'is_system_default' => true,
             ]);
 
             // 4. Update company with registered_by

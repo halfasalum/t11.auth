@@ -51,7 +51,8 @@ class Company extends Controller
             $insertedAdminId = $admin->id;
             $roleData = [
                 'role_name' => 'Company Admin',
-                'company'   => $insertedId
+                'company'   => $insertedId,
+                'is_system_default' => true,
             ];
             $role  = Roles::create($roleData);
             $roleId = $role->id;
@@ -83,7 +84,8 @@ class Company extends Controller
             $data = [
                 'role_id' => $roleId,
                 'user_id' => $insertedAdminId,
-                'user_role_status' => 1
+                'user_role_status' => 1,
+                'is_system_default' => true,
             ];
             users_roles::create($data);
 
