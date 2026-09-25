@@ -11,6 +11,7 @@ use App\Models\ZoneUser;
 use App\Services\UserLogService;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Exception;
@@ -70,47 +71,49 @@ class Authcontroller extends Controller
                     ->pluck('role_permissions.permission_id')
                     ->all();
 
-                // Get branches
-                $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
-                    ->select('branches.id', 'branch_name')
+                // Branches and zones in ONE query. Each statement is expensive on
+                // this database, so two round-trips became a UNION ALL.
+                $branchRows = DB::table('branch_users')
                     ->join('branches', 'branches.id', '=', 'branch_users.branch_id')
+                    ->where('branch_users.user_id', $user->id)
+                    ->where('branch_users.status', 1)
                     ->where('branches.status', 1)
-                    ->get();
+                    ->select(DB::raw("'branch' as kind"), 'branches.id as id', 'branches.branch_name as name');
 
-                if (sizeof($branchesData) > 0) {
-                    foreach ($branchesData as $branch) {
-                        $branches[] = $branch->branch_name;
-                        $branchesId[] = $branch->id;
-                    }
-                }
-
-                // Get zones
-                $zonesData = ZoneUser::where(['user_id' => $user->id, 'zone_users.status' => 1])
-                    ->select('zones.id', 'zone_name')
+                $assignments = DB::table('zone_users')
                     ->join('zones', 'zones.id', '=', 'zone_users.zone_id')
+                    ->where('zone_users.user_id', $user->id)
+                    ->where('zone_users.status', 1)
                     ->where('zones.status', 1)
+                    ->select(DB::raw("'zone' as kind"), 'zones.id as id', 'zones.zone_name as name')
+                    ->unionAll($branchRows)
                     ->get();
 
-                if (sizeof($zonesData) > 0) {
-                    foreach ($zonesData as $zone) {
-                        $zones[] = $zone->zone_name;
-                        $zonesId[] = $zone->id;
+                foreach ($assignments as $row) {
+                    if ($row->kind === 'branch') {
+                        $branches[] = $row->name;
+                        $branchesId[] = $row->id;
+                    } else {
+                        $zones[] = $row->name;
+                        $zonesId[] = $row->id;
                     }
                 }
 
                 $company = Company::where('id', $user->user_company)->first();
                 $financial = $this->generateFinancialYearDate($company->financial_year_start);
 
-                // Get latest subscription
-                $subscription = Subscription::where('company_id', $company->id)
-                    ->with('plan:id,name')
-                    ->latest()
+                // Latest subscription with its plan name in one query (was a
+                // subscription query plus a separate eager-load query for the plan).
+                $subscription = Subscription::where('subscriptions.company_id', $company->id)
+                    ->leftJoin('plans', 'plans.id', '=', 'subscriptions.plan_id')
+                    ->select('subscriptions.*', 'plans.name as plan_name')
+                    ->orderByDesc('subscriptions.created_at')
                     ->first();
 
 
                 $subscriptionData = $subscription ? [
                     'status'         => $subscription->status,
-                    'plan'           => $subscription->plan->name ?? null,
+                    'plan'           => $subscription->plan_name,
                     'end_date'       => $subscription->end_date?->toDateString(),
                     'days_remaining' => $subscription->days_remaining,
                 ] : [
@@ -136,7 +139,13 @@ class Authcontroller extends Controller
                     'name'  => $user->first_name . " " . $user->last_name,
                 ])->fromUser($user);
 
-                $userLogService->log('login', null, $user->id, $user->user_company);
+                // The audit entry is a database write (~1s here) that the user
+                // has no need to wait for — record it after the response is sent.
+                $loggedUserId = $user->id;
+                $loggedCompanyId = $user->user_company;
+                app()->terminating(function () use ($userLogService, $loggedUserId, $loggedCompanyId) {
+                    $userLogService->log('login', null, $loggedUserId, $loggedCompanyId);
+                });
 
                 return response()->json([
                     'token' => $token,
