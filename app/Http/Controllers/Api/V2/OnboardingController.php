@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\Zone;
 use App\Models\ZoneUser;
 use App\Models\users_roles;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Mandatory setup checklist, scoped by the user's permission tier. Every
@@ -63,11 +64,13 @@ class OnboardingController extends BaseController
             ]);
         }
 
-        $steps = array_map(function (array $step) use ($companyId, $userId) {
+        $completion = $this->completedSteps($companyId, $userId);
+
+        $steps = array_map(function (array $step) use ($completion) {
             return [
                 'key' => $step['key'],
                 'route' => $step['route'],
-                'completed' => $this->isStepComplete($step['key'], $companyId, $userId),
+                'completed' => $completion[$step['key']] ?? false,
             ];
         }, $this->checklistDefinitions()[$permissionId]);
 
@@ -95,50 +98,66 @@ class OnboardingController extends BaseController
         return null;
     }
 
-    private function isStepComplete(string $key, int $companyId, int $userId): bool
+    /**
+     * Whether each checklist step is done, computed in ONE database statement
+     * (a row of scalar subqueries) instead of one statement per step — every
+     * statement is expensive on this database, and this used to run around ten.
+     *
+     * @return array<string, bool> keyed by step key
+     */
+    private function completedSteps(int $companyId, int $userId): array
     {
-        $companyUserIds = fn () => User::where('user_company', $companyId)->pluck('id');
+        // Every user in the company, as a subquery rather than a fetched list.
+        $companyUsers = fn () => User::where('user_company', $companyId)->select('id');
 
-        return match ($key) {
+        // "Is there at least one matching row?" as a cheap scalar subquery.
+        $any = fn ($query) => $query->select(DB::raw('1'))->limit(1);
+
+        $row = DB::query()
             // Excludes the one "Company Admin" role registration auto-creates
             // for every new company — only a role the manager created
             // themselves through the Role Management screen counts.
-            'role_creation' => Roles::where('company', $companyId)
+            ->selectSub($any(Roles::where('company', $companyId)
                 ->where('status', 1)
-                ->where('is_system_default', false)
-                ->exists(),
+                ->where('is_system_default', false)), 'role_creation')
 
-            'user_creation' => User::where('user_company', $companyId)
+            ->selectSub($any(User::where('user_company', $companyId)
                 ->where('id', '!=', $userId)
-                ->where('status', '!=', 3)
-                ->exists(),
+                ->where('status', '!=', 3)), 'user_creation')
 
             // Excludes registration's auto-assignment of "Company Admin" to
             // the admin user — a role_id could still be the same one if the
             // manager later assigns that very role to someone else through
             // the Assign Role screen, since only THAT ROW is flagged, not
             // every row referencing that role.
-            'role_assignment' => users_roles::where('user_role_status', 1)
+            ->selectSub($any(users_roles::where('user_role_status', 1)
                 ->where('is_system_default', false)
-                ->whereIn('user_id', $companyUserIds())
-                ->exists(),
+                ->whereIn('user_id', $companyUsers())), 'role_assignment')
 
-            'branch_creation' => BranchModel::where('company', $companyId)
-                ->where('status', '!=', 3)
-                ->exists(),
+            ->selectSub($any(BranchModel::where('company', $companyId)
+                ->where('status', '!=', 3)), 'branch_creation')
 
-            'zone_creation' => Zone::where('company', $companyId)
-                ->where('status', '!=', 3)
-                ->exists(),
+            ->selectSub($any(Zone::where('company', $companyId)
+                ->where('status', '!=', 3)), 'zone_creation')
 
-            'user_allocation' => BranchUser::where('status', 1)->whereIn('user_id', $companyUserIds())->exists()
-                || ZoneUser::where('status', 1)->whereIn('user_id', $companyUserIds())->exists(),
+            ->selectSub($any(BranchUser::where('status', 1)
+                ->whereIn('user_id', $companyUsers())), 'allocated_to_branch')
 
-            'bank_account_creation' => Accounts::where('company_id', $companyId)
-                ->where('account_status', '!=', Accounts::STATUS_DELETED)
-                ->exists(),
+            ->selectSub($any(ZoneUser::where('status', 1)
+                ->whereIn('user_id', $companyUsers())), 'allocated_to_zone')
 
-            default => false,
-        };
+            ->selectSub($any(Accounts::where('company_id', $companyId)
+                ->where('account_status', '!=', Accounts::STATUS_DELETED)), 'bank_account_creation')
+            ->first();
+
+        return [
+            'role_creation' => $row->role_creation !== null,
+            'user_creation' => $row->user_creation !== null,
+            'role_assignment' => $row->role_assignment !== null,
+            'branch_creation' => $row->branch_creation !== null,
+            'zone_creation' => $row->zone_creation !== null,
+            'user_allocation' => $row->allocated_to_branch !== null || $row->allocated_to_zone !== null,
+            'bank_account_creation' => $row->bank_account_creation !== null,
+        ];
     }
 }
