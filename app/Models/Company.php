@@ -34,6 +34,11 @@ class Company extends Model
         'registration_completed_at' => 'datetime',
     ];
 
+    public const STATUS_ACTIVE = 1;
+    public const STATUS_SUSPENDED = 2;
+    public const STATUS_DELETED = 3;
+    public const STATUS_EXPIRED = 4;
+
     // Relationships
     public function users()
     {
