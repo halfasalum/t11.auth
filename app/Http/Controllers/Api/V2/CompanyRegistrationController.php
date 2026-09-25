@@ -132,13 +132,20 @@ class CompanyRegistrationController extends BaseController
             ]; // TODO: Pass specific module control IDs here
 
             if (!empty($controls)) {
-                foreach ($controls as $control_id) {
-                    role_permissions::create([
-                        'role_id' => $adminRole->id,
-                        'permission_id' => $control_id,
-                        'permission_status' => 1,
-                    ]);
-                }
+                // A single bulk insert instead of one round-trip per
+                // permission — with 30 rows and a remote DB host, looping
+                // ::create() here was slow enough to blow past PHP's 30s
+                // execution limit and hang the whole registration request.
+                $now = now();
+                $permissionRows = array_map(fn ($controlId) => [
+                    'role_id' => $adminRole->id,
+                    'permission_id' => $controlId,
+                    'permission_status' => 1,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ], $controls);
+
+                role_permissions::insert($permissionRows);
             }
 
             // Assign role to user

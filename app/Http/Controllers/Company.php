@@ -57,19 +57,27 @@ class Company extends Controller
             $role  = Roles::create($roleData);
             $roleId = $role->id;
 
-            $modules = Modules::where('module_status', 1)->get();
-            foreach ($modules as $module) {
-                $controls = modules_controls::where('module_id', $module->id)
-                    ->where('module_control_status', 1)
-                    ->get();
-                foreach ($controls as $control) {
-                    $data = [
-                        'role_id' => $roleId,
-                        'permission_id' => $control->id,
-                        'permission_status' => 1
-                    ];
-                    role_permissions::create($data);
-                }
+            // One query for every active control across every active module
+            // (instead of one SELECT per module), then one bulk INSERT for
+            // all of them (instead of one INSERT per permission). The old
+            // nested-loop version made ~64 sequential DB round-trips here
+            // alone — over a remote DB connection that's slow enough to
+            // blow past PHP's 30s execution limit and hang registration.
+            $controlIds = modules_controls::whereIn('module_id', Modules::where('module_status', 1)->pluck('id'))
+                ->where('module_control_status', 1)
+                ->pluck('id');
+
+            if ($controlIds->isNotEmpty()) {
+                $now = now();
+                $permissionRows = $controlIds->map(fn ($controlId) => [
+                    'role_id' => $roleId,
+                    'permission_id' => $controlId,
+                    'permission_status' => 1,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ])->all();
+
+                role_permissions::insert($permissionRows);
             }
 
             /*  $permissions = [7, 14, 15, 16, 17, 18, 21, 3, 10, 29, 30, 23];
