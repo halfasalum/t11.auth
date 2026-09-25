@@ -7,7 +7,6 @@ use App\Models\Company;
 use App\Models\Subscription;
 use App\Models\role_permissions;
 use App\Models\User;
-use App\Models\users_roles;
 use App\Models\ZoneUser;
 use App\Services\UserLogService;
 use Illuminate\Validation\ValidationException;
@@ -54,29 +53,22 @@ class Authcontroller extends Controller
 
                 $user->refresh_token = $refreshToken;
                 $user->refresh_token_expiry = $refreshTokenExpiry;
+                // Saved together with the refresh token — this used to be a
+                // second UPDATE later in the request.
+                $user->last_login_at = now();
                 $user->save();
 
                 $whatsappNotSet = $user->whatsapp_number == null ? true : false;
 
-                // Get roles and permissions
-                $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
-                    ->select('role_id')
-                    ->get();
-
-                if (sizeof($roles) > 0) {
-                    foreach ($roles as $role) {
-                        $role_permissions = role_permissions::where(['role_id' => $role->role_id, 'permission_status' => 1])
-                            ->select('permission_id')
-                            ->get();
-                        if (sizeof($role_permissions) > 0) {
-                            foreach ($role_permissions as $permission) {
-                                if (!in_array($permission->permission_id, $controls)) {
-                                    $controls[] = $permission->permission_id;
-                                }
-                            }
-                        }
-                    }
-                }
+                // Get the user's permissions across all their active roles in a
+                // single query (this used to run one query per role).
+                $controls = role_permissions::join('users_roles', 'users_roles.role_id', '=', 'role_permissions.role_id')
+                    ->where('users_roles.user_id', $user->id)
+                    ->where('users_roles.user_role_status', 1)
+                    ->where('role_permissions.permission_status', 1)
+                    ->distinct()
+                    ->pluck('role_permissions.permission_id')
+                    ->all();
 
                 // Get branches
                 $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
@@ -143,8 +135,6 @@ class Authcontroller extends Controller
                     "f_end_date" => $financial['end_date'],
                     'name'  => $user->first_name . " " . $user->last_name,
                 ])->fromUser($user);
-                $user->last_login_at = now();
-                $user->save();
 
                 $userLogService->log('login', null, $user->id, $user->user_company);
 
@@ -234,26 +224,18 @@ class Authcontroller extends Controller
             }
 
             // Fetch user permissions, branches, and company details
-            $controls = [];
             $branches = [];
             $zones = [];
             $branchesId = [];
             $zonesId = [];
 
-            $roles = users_roles::where(['user_id' => $user->id, 'user_role_status' => 1])
-                ->select('role_id')
-                ->get();
-
-            foreach ($roles as $role) {
-                $role_permissions = role_permissions::where(['role_id' => $role->role_id, 'permission_status' => 1])
-                    ->select('permission_id')
-                    ->get();
-                foreach ($role_permissions as $permission) {
-                    if (!in_array($permission->permission_id, $controls)) {
-                        $controls[] = $permission->permission_id;
-                    }
-                }
-            }
+            $controls = role_permissions::join('users_roles', 'users_roles.role_id', '=', 'role_permissions.role_id')
+                ->where('users_roles.user_id', $user->id)
+                ->where('users_roles.user_role_status', 1)
+                ->where('role_permissions.permission_status', 1)
+                ->distinct()
+                ->pluck('role_permissions.permission_id')
+                ->all();
 
             $branchesData = BranchUser::where(['user_id' => $user->id, 'branch_users.status' => 1])
                 ->select('branches.id', 'branch_name')

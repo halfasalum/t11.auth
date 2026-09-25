@@ -364,31 +364,18 @@ class Dashboard extends BaseController
     {
         try {
 
-            $commands = [
-                'config:clear',
-                'cache:clear',
-                'route:clear',
-                'view:clear',
-                'optimize:clear',
-
-                // Production caches
-                'config:cache',
-                'route:cache',
-                'view:cache',
-            ];
-
-            $results = [];
-
-            foreach ($commands as $command) {
-                Artisan::call($command);
-
-                $results[] = [
-                    'command' => $command,
-                    'output' => Artisan::output()
-                ];
+            // Rebuilding the framework caches used to run on EVERY load of this
+            // dashboard — eight Artisan commands (clear + rebuild config, routes,
+            // views, and the application cache) before any dashboard data was
+            // fetched. That made every load slow, wiped the app cache for all
+            // users, and defeated the 60-minute cache on getPlatformAnalytics().
+            // Kept as an explicit opt-in (?refresh_caches=1) so it can still be
+            // triggered after a deploy, but it no longer runs on a normal load.
+            if ($request->boolean('refresh_caches')) {
+                foreach (['config:clear', 'cache:clear', 'route:clear', 'view:clear', 'optimize:clear', 'config:cache', 'route:cache', 'view:cache'] as $command) {
+                    Artisan::call($command);
+                }
             }
-
-            $companyId = $request->get('company_id');
 
             // Multi-company overview
             $companiesOverview = $this->getCompaniesOverview();
@@ -1944,19 +1931,27 @@ class Dashboard extends BaseController
         $companies = Company::where('company_status', '!=', 3)->get();
         $overview = [];
 
-        foreach ($companies as $company) {
-            $loans = Loans::where('company', $company->id)->where('status', '!=', 9)->get();
-            $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
-                return ($loan->total_loan) - $loan->loan_paid;
-            });
+        // Two grouped queries for every company at once, instead of two
+        // queries per company (and every loan row pulled into memory just to
+        // be counted and summed in PHP).
+        $loanTotals = Loans::whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
+            ->selectRaw('company, COUNT(*) as active_loans, SUM(total_loan - COALESCE(loan_paid, 0)) as portfolio')
+            ->groupBy('company')
+            ->get()
+            ->keyBy('company');
 
+        $customerTotals = CustomersZone::selectRaw('company_id, COUNT(*) as total')
+            ->groupBy('company_id')
+            ->pluck('total', 'company_id');
+
+        foreach ($companies as $company) {
             $overview[] = [
                 'company_id' => $company->id,
                 'company_name' => $company->company_name,
                 'status' => $company->company_status,
-                'total_customers' => CustomersZone::where('company_id', $company->id)->count(),
-                'active_loans' => $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count(),
-                'total_portfolio' => (float) $totalPortfolio,
+                'total_customers' => (int) ($customerTotals[$company->id] ?? 0),
+                'active_loans' => (int) ($loanTotals[$company->id]->active_loans ?? 0),
+                'total_portfolio' => (float) ($loanTotals[$company->id]->portfolio ?? 0),
                 'subscription_plan' => $company->subscription_plan ?? 'Free',
                 'subscription_end_date' => $company->subscription_end_date,
             ];
@@ -2023,19 +2018,11 @@ class Dashboard extends BaseController
     private function getDatabaseSize()
     {
         try {
-            $totalSizeBytes = 0;
-            $tableNames = DB::select("SHOW TABLES");
-
-            foreach ($tableNames as $tableObj) {
-                $tableName = current((array)$tableObj);
-
-                // Get table status
-                $status = DB::select("SHOW TABLE STATUS WHERE Name = ?", [$tableName]);
-
-                if (!empty($status)) {
-                    $totalSizeBytes += ($status[0]->Data_length + $status[0]->Index_length);
-                }
-            }
+            // One query for the whole schema instead of SHOW TABLES followed by
+            // a SHOW TABLE STATUS round-trip for every single table.
+            $totalSizeBytes = (float) DB::table('information_schema.TABLES')
+                ->where('TABLE_SCHEMA', DB::connection()->getDatabaseName())
+                ->sum(DB::raw('DATA_LENGTH + INDEX_LENGTH'));
 
             // Calculate size to readable format
             $units = ['B', 'KB', 'MB', 'GB', 'TB'];
