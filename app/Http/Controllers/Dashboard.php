@@ -33,6 +33,132 @@ use Illuminate\Validation\ValidationException;
 class Dashboard extends BaseController
 {
     /**
+     * Request-scoped memoized fetches. Every statement here costs a full
+     * network round-trip to the database, and manager_dashboard() used to
+     * independently re-query "this company's non-cancelled loans" and "this
+     * company's customer/zone assignments" from about ten different helper
+     * methods each request. Fetched once per company id and reused —
+     * Collection::where()/whereIn() mirror the query builder's methods
+     * closely enough that each helper below filters the same in-memory set
+     * instead of hitting the database again.
+     */
+    private array $loansMemo = [];
+    private array $customerZonesMemo = [];
+    private array $paymentActivityMemo = [];
+    private array $monthToDateActivityMemo = [];
+
+    /**
+     * Month-to-date scheduled and collected amounts grouped by zone/branch,
+     * for the "collection rate" figure in getZonePerformance() — a
+     * different (unfiltered) row-set than paymentActivity() above, so kept
+     * as its own query pair rather than folded into it.
+     */
+    private function monthToDateActivity(int $companyId): array
+    {
+        return $this->monthToDateActivityMemo[$companyId] ??= (function () use ($companyId) {
+            $start = Carbon::now()->startOfMonth();
+            $end = Carbon::now();
+
+            $targets = LoanPaymentSchedules::whereBetween('payment_due_date', [$start, $end])
+                ->where('company', $companyId)
+                ->selectRaw('zone, SUM(payment_total_amount) as total')
+                ->groupBy('zone')
+                ->pluck('total', 'zone');
+
+            $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
+                ->whereBetween('payment_due_date', [$start, $end])
+                ->where('payment_submissions.company', $companyId)
+                ->where('submission_status', 11)
+                ->selectRaw('loan_payment_schedule.zone as zone, SUM(payment_submissions.amount) as total')
+                ->groupBy('loan_payment_schedule.zone')
+                ->pluck('total', 'zone');
+
+            return ['targets' => $targets, 'collected' => $collected];
+        })();
+    }
+
+    /**
+     * Scheduled (target) and collected amounts for the last 8 days (today
+     * back 7 days), grouped by date/zone/branch in 2 queries total instead
+     * of a pair of queries per call site — getTodayCollection() and
+     * getCollectionTrend() used to run this same shape of query once per
+     * day requested, and once again for every branch/zone breakdown that
+     * calls them in a loop.
+     */
+    private function paymentActivity(int $companyId): array
+    {
+        return $this->paymentActivityMemo[$companyId] ??= (function () use ($companyId) {
+            $dates = [];
+            for ($i = 7; $i >= 0; $i--) {
+                $dates[] = Carbon::today()->subDays($i)->toDateString();
+            }
+
+            $targets = LoanPaymentSchedules::whereIn('payment_due_date', $dates)
+                ->where('company', $companyId)
+                ->where('status', 1)
+                ->whereHas('loan', function ($q) {
+                    $q->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
+                })
+                ->selectRaw('payment_due_date, zone, branch, SUM(payment_total_amount) as total')
+                ->groupBy('payment_due_date', 'zone', 'branch')
+                ->get();
+
+            $collected = PaymentSubmissions::join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id')
+                ->whereIn('loan_payment_schedule.payment_due_date', $dates)
+                ->where('payment_submissions.company', $companyId)
+                ->where('submission_status', 11)
+                ->selectRaw('loan_payment_schedule.payment_due_date as payment_due_date, payment_submissions.zone as zone, payment_submissions.branch as branch, SUM(payment_submissions.amount) as total')
+                ->groupBy('loan_payment_schedule.payment_due_date', 'payment_submissions.zone', 'payment_submissions.branch')
+                ->get();
+
+            return ['targets' => $targets, 'collected' => $collected];
+        })();
+    }
+
+    /**
+     * Sum pre-grouped payment_activity() rows for one date, filtered the
+     * same way the original per-call queries were: branch takes priority
+     * over zone, and with neither given every row for that date counts
+     * (the company-wide total).
+     */
+    private function sumActivity($rows, string $date, array $zoneIds = [], array $branchIds = []): float
+    {
+        return (float) $rows->filter(function ($row) use ($date, $zoneIds, $branchIds) {
+            // payment_due_date comes back as a Carbon instance when the rows
+            // were hydrated as LoanPaymentSchedules (it casts that column to
+            // 'date') but as a plain string when hydrated as PaymentSubmissions
+            // (no such cast there) — normalize both to a Y-m-d string before
+            // comparing, or every "targets" row silently fails to match.
+            $rowDate = $row->payment_due_date instanceof \DateTimeInterface
+                ? $row->payment_due_date->format('Y-m-d')
+                : (string) $row->payment_due_date;
+            if ($rowDate !== $date) {
+                return false;
+            }
+            if (!empty($branchIds)) {
+                return in_array($row->branch, $branchIds);
+            }
+            if (!empty($zoneIds)) {
+                return in_array($row->zone, $zoneIds);
+            }
+            return true;
+        })->sum('total');
+    }
+
+    private function companyLoans(int $companyId)
+    {
+        return $this->loansMemo[$companyId] ??= Loans::where('company', $companyId)
+            ->where('status', '!=', 9)
+            ->with('loan_customer:id,fullname')
+            ->get();
+    }
+
+    private function companyCustomerZones(int $companyId)
+    {
+        return $this->customerZonesMemo[$companyId] ??= CustomersZone::where('company_id', $companyId)->get();
+    }
+
+    /**
      * LOAN OFFICER DASHBOARD
      * Permission: 19
      */
@@ -486,44 +612,13 @@ class Dashboard extends BaseController
     {
         $today = Carbon::today()->toDateString();
         $yesterday = Carbon::yesterday()->toDateString();
-
-        $targetQuery = LoanPaymentSchedules::whereIn('payment_due_date', [$today, $yesterday])
-            ->where('company', $companyId)
-            ->where('status', 1)
-            ->whereHas('loan', function ($q) {
-                $q->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
-            });
-
-        if (!empty($branchIds)) {
-            $targetQuery->whereIn('branch', $branchIds);
-        } elseif (!empty($zoneIds)) {
-            $targetQuery->whereIn('zone', $zoneIds);
-        }
-
-        $targets = $targetQuery->selectRaw('payment_due_date, SUM(payment_total_amount) as total')
-            ->groupBy('payment_due_date')
-            ->pluck('total', 'payment_due_date');
-
-        $collectedQuery = PaymentSubmissions::whereIn('loan_payment_schedule.payment_due_date', [$today, $yesterday])
-            ->where('payment_submissions.company', $companyId)
-            ->where('submission_status', 11)
-            ->join('loan_payment_schedule', 'payment_submissions.schedule_id', '=', 'loan_payment_schedule.id');
-
-        if (!empty($branchIds)) {
-            $collectedQuery->whereIn('payment_submissions.branch', $branchIds);
-        } elseif (!empty($zoneIds)) {
-            $collectedQuery->whereIn('payment_submissions.zone', $zoneIds);
-        }
-
-        $collections = $collectedQuery->selectRaw('loan_payment_schedule.payment_due_date, SUM(payment_submissions.amount) as total')
-            ->groupBy('loan_payment_schedule.payment_due_date')
-            ->pluck('total', 'loan_payment_schedule.payment_due_date');
+        $activity = $this->paymentActivity($companyId);
 
         return [
-            'target' => $targets[$today] ?? 0,
-            'collected' => $collections[$today] ?? 0,
-            'target_yesterday' => $targets[$yesterday] ?? 0,
-            'collected_yesterday' => $collections[$yesterday] ?? 0,
+            'target' => $this->sumActivity($activity['targets'], $today, $zoneIds, $branchIds),
+            'collected' => $this->sumActivity($activity['collected'], $today, $zoneIds, $branchIds),
+            'target_yesterday' => $this->sumActivity($activity['targets'], $yesterday, $zoneIds, $branchIds),
+            'collected_yesterday' => $this->sumActivity($activity['collected'], $yesterday, $zoneIds, $branchIds),
         ];
     }
 
@@ -532,45 +627,20 @@ class Dashboard extends BaseController
      */
     private function getCollectionTrend($zoneIds, $branchIds, $companyId)
     {
+        $activity = $this->paymentActivity($companyId);
         $trend = [];
         $today = Carbon::today();
 
         for ($i = 6; $i >= 0; $i--) {
             $date = $today->copy()->subDays($i)->toDateString();
-
-            $targetQuery = LoanPaymentSchedules::where('payment_due_date', $date)
-                ->where('company', $companyId)
-                ->where('status', 1)
-                ->whereHas('loan', function ($q) {
-                    $q->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
-                });
-
-            if (!empty($branchIds)) {
-                $targetQuery->whereIn('branch', $branchIds);
-            } elseif (!empty($zoneIds)) {
-                $targetQuery->whereIn('zone', $zoneIds);
-            }
-
-            $target = $targetQuery->sum('payment_total_amount');
-
-            $collectedQuery = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
-                ->whereDate('payment_due_date', $date)
-                ->where('payment_submissions.company', $companyId)
-                ->where('submission_status', 11);
-
-            if (!empty($branchIds)) {
-                $collectedQuery->whereIn('loan_payment_schedule.branch', $branchIds);
-            } elseif (!empty($zoneIds)) {
-                $collectedQuery->whereIn('loan_payment_schedule.zone', $zoneIds);
-            }
-
-            $collected = $collectedQuery->sum('amount');
+            $target = $this->sumActivity($activity['targets'], $date, $zoneIds, $branchIds);
+            $collected = $this->sumActivity($activity['collected'], $date, $zoneIds, $branchIds);
 
             $trend[] = [
                 'date' => $date,
                 'formatted_date' => Carbon::parse($date)->format('D, M d'),
-                'target' => (float) $target,
-                'collected' => (float) $collected,
+                'target' => $target,
+                'collected' => $collected,
                 'efficiency' => $target > 0 ? round(($collected / $target) * 100, 2) : 0,
             ];
         }
@@ -1046,11 +1116,12 @@ class Dashboard extends BaseController
         $zones = Zone::whereIn('id', $zoneIds)->get();
         $performance = [];
 
+        $allLoans = $this->companyLoans($companyId);
+        $customerZones = $this->companyCustomerZones($companyId);
+        $monthToDate = $this->monthToDateActivity($companyId);
+
         foreach ($zones as $zone) {
-            $loans = Loans::where('company', $companyId)
-                ->where('status', '!=', 9)
-                ->where('zone', $zone->id)
-                ->get();
+            $loans = $allLoans->where('zone', $zone->id);
 
             $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
             $totalPortfolio = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->sum(function ($loan) {
@@ -1058,18 +1129,8 @@ class Dashboard extends BaseController
             });
 
             // Get collection rate for this zone
-            $startOfMonth = Carbon::now()->startOfMonth();
-            $target = LoanPaymentSchedules::whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
-                ->where('zone', $zone->id)
-                ->where('company', $companyId)
-                ->sum('payment_total_amount');
-
-            $collected = PaymentSubmissions::join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
-                ->whereBetween('payment_due_date', [$startOfMonth, Carbon::now()])
-                ->where('loan_payment_schedule.zone', $zone->id)
-                ->where('payment_submissions.company', $companyId)
-                ->where('submission_status', 11)
-                ->sum('amount');
+            $target = $monthToDate['targets'][$zone->id] ?? 0;
+            $collected = $monthToDate['collected'][$zone->id] ?? 0;
 
             $collectionRate = $target > 0 ? round(($collected / $target) * 100, 2) : 0;
 
@@ -1081,7 +1142,7 @@ class Dashboard extends BaseController
                 'active_loans' => $activeLoans,
                 'total_portfolio' => (float) $totalPortfolio,
                 'collection_rate' => $collectionRate,
-                'customers' => CustomersZone::where('zone_id', $zone->id)->count(),
+                'customers' => $customerZones->where('zone_id', $zone->id)->count(),
                 'today_target' => (float) ($todayGoal['target'] ?? 0),
                 'today_collected' => (float) ($todayGoal['collected'] ?? 0),
                 'today_efficiency' => !empty($todayGoal['target']) && $todayGoal['target'] > 0 ? round(($todayGoal['collected'] / $todayGoal['target']) * 100, 2) : 0,
@@ -1271,10 +1332,12 @@ class Dashboard extends BaseController
      */
     private function getCompanyCustomers($companyId)
     {
-        $total = CustomersZone::where('company_id', $companyId)->count();
-        $active = CustomersZone::where('company_id', $companyId)->where('status', 1)->count();
+        $customerZones = $this->companyCustomerZones($companyId);
 
-        return ['total' => $total, 'active' => $active];
+        return [
+            'total' => $customerZones->count(),
+            'active' => $customerZones->where('status', 1)->count(),
+        ];
     }
 
     /**
@@ -1282,9 +1345,7 @@ class Dashboard extends BaseController
      */
     private function getCompanyLoans($companyId)
     {
-        $loans = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
-            ->get();
+        $loans = $this->companyLoans($companyId);
 
         $total = $loans->count();
         $active = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
@@ -1311,10 +1372,8 @@ class Dashboard extends BaseController
      */
     private function getFinancialKPI($companyId)
     {
-        $loans = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
-            ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
-            ->get();
+        $loans = $this->companyLoans($companyId)
+            ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
 
         $totalPortfolio = $loans->sum(function ($loan) {
             return ($loan->total_loan) - $loan->loan_paid;
@@ -1371,9 +1430,7 @@ class Dashboard extends BaseController
      */
     private function getOperationalKPI($companyId)
     {
-        $loans = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
-            ->get();
+        $loans = $this->companyLoans($companyId);
 
         $totalApplications = $loans->count();
         $approved = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED])->count();
@@ -1401,40 +1458,27 @@ class Dashboard extends BaseController
         $startDate = Carbon::now()->startOfYear();
         $endDate = Carbon::now();
 
-        // Interest income
-        $interestIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
+        // Interest and penalty income in one query — both are conditional
+        // sums over the same filtered join, instead of two separate queries
+        // (plus a third, unused "scheduleIncome" sum that was never read).
+        $income = PaymentSubmissions::where('payment_submissions.company', $companyId)
             ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
             ->where('submission_status', 11)
             ->whereBetween('payment_due_date', [$startDate, $endDate])
-            ->sum('paid_interest');
-        $scheduleIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
-            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
-            ->where('submission_status', 11)
-            ->whereBetween('payment_due_date', [$startDate, $endDate])
-            ->sum('amount');
+            ->selectRaw('SUM(paid_interest) as interest_income, SUM(CASE WHEN is_penalty = 1 THEN amount ELSE 0 END) as penalty_income')
+            ->first();
+        $interestIncome = (float) ($income->interest_income ?? 0);
+        $penaltyIncome = (float) ($income->penalty_income ?? 0);
 
-        // Penalty income
-        $penaltyIncome = PaymentSubmissions::where('payment_submissions.company', $companyId)
-            ->join('loan_payment_schedule', 'loan_payment_schedule.id', '=', 'payment_submissions.schedule_id')
-            ->where('submission_status', 11)
-            ->whereBetween('payment_due_date', [$startDate, $endDate])
-            ->whereHas('schedule', function ($q) {
-                $q->where('is_penalty', true);
-            })
-            ->sum('amount');
-
-        // Total expenses
-        $totalExpense = Expenses::where('company_id', $companyId)
+        // Total and staff-related expenses in one query via a left join to
+        // the category, instead of a plain sum plus a whereHas-filtered sum.
+        $expense = Expenses::where('expenses.company_id', $companyId)
+            ->leftJoin('expense_categories', 'expense_categories.id', '=', 'expenses.category_id')
             ->whereBetween('expense_date', [$startDate, $endDate])
-            ->sum('amount');
-
-        // Staff related expenses
-        $staffExpense = Expenses::where('company_id', $companyId)
-            ->whereBetween('expense_date', [$startDate, $endDate])
-            ->whereHas('category', function ($q) {
-                $q->where('is_staff_related', true);
-            })
-            ->sum('amount');
+            ->selectRaw('SUM(expenses.amount) as total_expense, SUM(CASE WHEN expense_categories.is_staff_related = 1 THEN expenses.amount ELSE 0 END) as staff_expense')
+            ->first();
+        $totalExpense = (float) ($expense->total_expense ?? 0);
+        $staffExpense = (float) ($expense->staff_expense ?? 0);
 
         $totalIncome = $interestIncome + $penaltyIncome;
         $netProfit = $totalIncome - $totalExpense;
@@ -1461,14 +1505,16 @@ class Dashboard extends BaseController
             ->where('status', 1)
             ->get();
 
+        // Every branch's zones in one query instead of one per branch.
+        $zonesByBranch = Zone::whereIn('branch', $branches->pluck('id'))->get()->groupBy('branch');
+        $allLoans = $this->companyLoans($companyId);
+        $customerZones = $this->companyCustomerZones($companyId);
+
         $performance = [];
         foreach ($branches as $branch) {
-            $zoneIds = Zone::where('branch', $branch->id)->pluck('id')->toArray();
+            $zoneIds = ($zonesByBranch->get($branch->id) ?? collect())->pluck('id')->all();
 
-            $loans = Loans::where('company', $companyId)
-                ->where('status', '!=', 9)
-                ->whereIn('zone', $zoneIds)
-                ->get();
+            $loans = $allLoans->whereIn('zone', $zoneIds);
 
             $totalDisbursed = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED, Loans::STATUS_DEFAULTED])->sum('total_loan');
             $totalRepaid = $loans->sum('loan_paid');
@@ -1494,7 +1540,7 @@ class Dashboard extends BaseController
             $performance[] = [
                 'branch_id' => $branch->id,
                 'branch_name' => $branch->branch_name,
-                'active_customers' => CustomersZone::whereIn('zone_id', $zoneIds)->count(),
+                'active_customers' => $customerZones->whereIn('zone_id', $zoneIds)->count(),
                 'active_loans' => $activeLoans,
                 'completed_loans' => $completedLoans,
                 'total_disbursed' => (float) $totalDisbursed,
@@ -1533,13 +1579,15 @@ class Dashboard extends BaseController
             ->where('status', 1)
             ->get();
 
+        $allLoans = $this->companyLoans($companyId);
+        // The popularity denominator counts every loan regardless of status
+        // (unlike $allLoans, which excludes status 9) — the same value for
+        // every product, so fetched once instead of once per product.
+        $totalCompanyLoans = Loans::where('company', $companyId)->count();
+
         $performance = [];
         foreach ($products as $product) {
-            $loans = Loans::where('product', $product->id)
-                ->where('status', '!=', 9)
-                ->where('company', $companyId)
-                ->where('status', '!=', 9)
-                ->get();
+            $loans = $allLoans->where('product', $product->id);
 
             $totalLoans = $loans->count();
             $activeLoans = $loans->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])->count();
@@ -1549,7 +1597,7 @@ class Dashboard extends BaseController
             $totalDisbursed = $loans->sum('principal_amount');
             $totalRepaid = $loans->sum('loan_paid');
 
-            $popularity = $totalLoans > 0 ? round(($totalLoans / Loans::where('company', $companyId)->count()) * 100, 2) : 0;
+            $popularity = $totalLoans > 0 ? round(($totalLoans / $totalCompanyLoans) * 100, 2) : 0;
             $defaultRate = $totalLoans > 0 ? round(($defaultedLoans / $totalLoans) * 100, 2) : 0;
 
             $performance[] = [
@@ -1580,19 +1628,18 @@ class Dashboard extends BaseController
      */
     private function getParTrend($companyId)
     {
+        $activeOrOverdueLoans = $this->companyLoans($companyId)
+            ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE]);
+
         $trend = [];
         for ($i = 5; $i >= 0; $i--) {
             $monthStart = Carbon::now()->subMonths($i)->startOfMonth();
             $monthEnd = Carbon::now()->subMonths($i)->endOfMonth();
 
-            $loans = Loans::where('company', $companyId)
-                ->where('status', '!=', 9)
-                ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
-                ->where(function ($q) use ($monthStart, $monthEnd) {
-                    $q->whereBetween('start_date', [$monthStart, $monthEnd])
-                        ->orWhereBetween('end_date', [$monthStart, $monthEnd]);
-                })
-                ->get();
+            $loans = $activeOrOverdueLoans->filter(function ($loan) use ($monthStart, $monthEnd) {
+                return ($loan->start_date && $loan->start_date->between($monthStart, $monthEnd))
+                    || ($loan->end_date && $loan->end_date->between($monthStart, $monthEnd));
+            });
 
             $par30 = 0;
             $par60 = 0;
@@ -1635,18 +1682,19 @@ class Dashboard extends BaseController
      */
     private function getCustomerAcquisitionTrend($companyId)
     {
+        $customerZones = $this->companyCustomerZones($companyId);
         $trend = [];
         for ($i = 5; $i >= 0; $i--) {
             $monthStart = Carbon::now()->subMonths($i)->startOfMonth();
             $monthEnd = Carbon::now()->subMonths($i)->endOfMonth();
 
-            $newCustomers = CustomersZone::where('company_id', $companyId)
-                ->whereBetween('created_at', [$monthStart, $monthEnd])
-                ->count();
+            $newCustomers = $customerZones->filter(function ($cz) use ($monthStart, $monthEnd) {
+                return $cz->created_at && $cz->created_at->between($monthStart, $monthEnd);
+            })->count();
 
-            $totalCustomers = CustomersZone::where('company_id', $companyId)
-                ->where('created_at', '<=', $monthEnd)
-                ->count();
+            $totalCustomers = $customerZones->filter(function ($cz) use ($monthEnd) {
+                return $cz->created_at && $cz->created_at->lte($monthEnd);
+            })->count();
 
             $trend[] = [
                 'month' => $monthStart->format('M Y'),
@@ -1664,10 +1712,14 @@ class Dashboard extends BaseController
      */
     private function getRiskAnalytics($companyId)
     {
-        // Credit score distribution
-        $customers = Customers::whereHas('zoneAssignment', function ($q) use ($companyId) {
+        $allLoans = $this->companyLoans($companyId);
+
+        // Credit score distribution — the score is a hardcoded constant
+        // below, so every customer lands in "good" regardless; only the
+        // count is actually needed, not each customer row.
+        $customerCount = Customers::whereHas('zoneAssignment', function ($q) use ($companyId) {
             $q->where('company_id', $companyId);
-        })->get();
+        })->count();
 
         $scoreDistribution = [
             'excellent' => 0, // 800+
@@ -1677,33 +1729,22 @@ class Dashboard extends BaseController
             'very_poor' => 0, // <500
         ];
 
-        foreach ($customers as $customer) {
-            // Simplified score calculation
-            $score = 700; // Default base score
-            // Add logic based on payment history, etc.
-
-            if ($score >= 800) $scoreDistribution['excellent']++;
-            elseif ($score >= 700) $scoreDistribution['good']++;
-            elseif ($score >= 600) $scoreDistribution['fair']++;
-            elseif ($score >= 500) $scoreDistribution['poor']++;
-            else $scoreDistribution['very_poor']++;
-        }
+        // Every customer currently gets the same hardcoded base score (700),
+        // which always falls in the "good" bucket — so the loop this used to
+        // be reduces to a single assignment.
+        $scoreDistribution['good'] = $customerCount;
 
         // High risk customers (with overdue loans)
-        $highRiskCustomers = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
-            ->where('status', Loans::STATUS_OVERDUE)
-            ->distinct('customer')
+        $highRiskCustomers = $allLoans->where('status', Loans::STATUS_OVERDUE)
+            ->pluck('customer')
+            ->unique()
             ->count();
 
         // Delinquency rate by product
         $products = LoansProducts::where('company', $companyId)->get();
         $delinquencyByProduct = [];
         foreach ($products as $product) {
-            $loans = Loans::where('product', $product->id)
-                ->where('status', '!=', 9)
-                ->where('company', $companyId)
-                ->get();
+            $loans = $allLoans->where('product', $product->id);
 
             $totalLoans = $loans->count();
             $overdueLoans = $loans->where('status', Loans::STATUS_OVERDUE)->count();
@@ -1718,11 +1759,8 @@ class Dashboard extends BaseController
         }
 
         // Top 10 customers by exposure (largest outstanding balances)
-        $topExposure = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
+        $topExposure = $allLoans
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE])
-            ->with(['loan_customer'])
-            ->get()
             ->groupBy('customer')
             ->map(function ($customerLoans) {
                 return [
@@ -1762,11 +1800,8 @@ class Dashboard extends BaseController
      */
     private function getTopCompanyCustomers($companyId, $limit = 10)
     {
-        return Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
+        return $this->companyLoans($companyId)
             ->whereIn('status', [Loans::STATUS_ACTIVE, Loans::STATUS_OVERDUE, Loans::STATUS_COMPLETED])
-            ->with(['loan_customer'])
-            ->get()
             ->groupBy('customer')
             ->map(function ($customerLoans) {
                 return [
@@ -1793,24 +1828,21 @@ class Dashboard extends BaseController
      */
     private function getManagerPendingApprovals($companyId)
     {
-        // Pending zone approvals (submission_status = 4)
-        $pendingZoneApprovals = PaymentSubmissions::where('company', $companyId)
-            ->where('submission_status', 4)
-            ->count();
-
-        // Pending branch approvals (submission_status = 8)
-        $pendingBranchApprovals = PaymentSubmissions::where('company', $companyId)
-            ->where('submission_status', 8)
-            ->count();
+        // Pending zone (submission_status = 4) and branch (= 8) approvals in
+        // one query instead of two separate counts on the same table.
+        $submissionCounts = PaymentSubmissions::where('company', $companyId)
+            ->selectRaw('SUM(submission_status = 4) as pending_zone, SUM(submission_status = 8) as pending_branch')
+            ->first();
+        $pendingZoneApprovals = (int) ($submissionCounts->pending_zone ?? 0);
+        $pendingBranchApprovals = (int) ($submissionCounts->pending_branch ?? 0);
 
         // Pending loan applications
-        $pendingLoanApplications = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
+        $pendingLoanApplications = $this->companyLoans($companyId)
             ->where('status', Loans::STATUS_SUBMITTED)
             ->count();
 
         // Pending customer registrations
-        $pendingCustomerRegistrations = CustomersZone::where('company_id', $companyId)
+        $pendingCustomerRegistrations = $this->companyCustomerZones($companyId)
             ->where('status', 4)
             ->count();
 
@@ -1839,9 +1871,10 @@ class Dashboard extends BaseController
             ->sum('amount');
 
         // Cash outflows (disbursements)
-        $disbursements = Loans::where('company', $companyId)
-            ->where('status', '!=', 9)
-            ->whereBetween('start_date', [$startDate, $endDate])
+        $disbursements = $this->companyLoans($companyId)
+            ->filter(function ($loan) use ($startDate, $endDate) {
+                return $loan->start_date && $loan->start_date->between($startDate, $endDate);
+            })
             ->sum('principal_amount');
 
         // Cash outflows (expenses)
@@ -1870,26 +1903,42 @@ class Dashboard extends BaseController
     private function getStaffPerformance($companyId)
     {
         $users = User::where('user_company', $companyId)->get();
+        $loans = $this->companyLoans($companyId);
+
+        // Every user's first active role, and that role's permission set,
+        // batched instead of the 2 queries per user getUserRole() used to
+        // run — same "first matching row" semantics as users_roles::first().
+        $firstRoleByUser = users_roles::where('user_role_status', 1)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->get()
+            ->groupBy('user_id')
+            ->map(fn ($rows) => $rows->first());
+
+        $permissionsByRole = role_permissions::where('permission_status', 1)
+            ->whereIn('role_id', $firstRoleByUser->pluck('role_id')->unique())
+            ->get()
+            ->groupBy('role_id')
+            ->map(fn ($rows) => $rows->pluck('permission_id')->all());
+
         $performance = [];
 
         foreach ($users as $user) {
             // Loans registered by this user
-            $loans = Loans::where('company', $companyId)
-                ->where('status', '!=', 9)
-                ->where('registered_by', $user->id)
-                ->where('status', '!=', 9)
-                ->get();
+            $userLoans = $loans->where('registered_by', $user->id);
 
-            $totalDisbursed = $loans->sum('principal_amount');
-            $totalLoans = $loans->count();
+            $role = $firstRoleByUser->get($user->id);
+            $permissions = $role ? ($permissionsByRole->get($role->role_id) ?? []) : [];
+            $roleLabel = in_array(19, $permissions) ? 'Officer'
+                : (in_array(20, $permissions) ? 'Branch Incharge'
+                : (in_array(21, $permissions) ? 'Manager' : 'Admin'));
 
             $performance[] = [
                 'user_id' => $user->id,
                 'name' => $user->first_name . ' ' . $user->last_name,
                 'email' => $user->email,
-                'role' => $this->getUserRole($user->id),
-                'total_loans_registered' => $totalLoans,
-                'total_disbursed' => (float) $totalDisbursed,
+                'role' => $roleLabel,
+                'total_loans_registered' => $userLoans->count(),
+                'total_disbursed' => (float) $userLoans->sum('principal_amount'),
             ];
         }
 
@@ -1901,27 +1950,6 @@ class Dashboard extends BaseController
         return $performance;
     }
 
-    /**
-     * Get user role
-     */
-    private function getUserRole($userId)
-    {
-        $role = users_roles::where('user_id', $userId)
-            ->where('user_role_status', 1)
-            ->first();
-        $role_permissions = role_permissions::where('role_id', $role->role_id)
-            ->where('permission_status', 1)->get();
-        $permissions = $role_permissions->pluck('permission_id')->toArray();
-        if (in_array(19, $permissions)) {
-            return 'Officer';
-        } elseif (in_array(20, $permissions)) {
-            return 'Branch Incharge';
-        } elseif (in_array(21, $permissions)) {
-            return 'Manager';
-        } else {
-            return 'Admin';
-        }
-    }
 
     /**
      * Get companies overview (for super admin)
