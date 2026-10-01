@@ -94,6 +94,8 @@ class KikobaPayoutNotificationService
                     $member,
                     $group->name,
                     $financialYearName,
+                    (float) $report->total_savings_amount,
+                    $report->breakdown ?? [],
                     (float) $report->total_payout,
                     $company
                 );
@@ -112,9 +114,11 @@ class KikobaPayoutNotificationService
                         financialYearName: $financialYearName,
                         periodLabel: $periodLabel,
                         totalSavingsAmount: (float) $report->total_savings_amount,
+                        totalShareUnits: (int) $report->total_share_units,
                         totalShareAmount: (float) $report->total_share_amount,
                         profitAmount: (float) $report->profit_amount,
                         totalPayout: (float) $report->total_payout,
+                        breakdown: $report->breakdown ?? [],
                         companyName: $company->company_name,
                         companyPhone: $company->company_phone,
                     ));
