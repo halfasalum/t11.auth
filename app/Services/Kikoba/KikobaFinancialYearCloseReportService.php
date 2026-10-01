@@ -43,7 +43,21 @@ class KikobaFinancialYearCloseReportService
 
             $group = $groupFinancialYear->group;
 
-            $activeMembers = $group->activeMembers()->get();
+            // Who shares in this cycle's payout is who was actually a member
+            // of the group at some point DURING this cycle — NOT who happens
+            // to be active right now. Without that, regenerating an old
+            // cycle's report later would wrongly pull in members who joined
+            // only after it already ended, and wrongly drop members who've
+            // since exited but were present for part of it. A member who
+            // joined mid-cycle (e.g. the group's records only started partway
+            // through the cycle's nominal start_date) still counts — see
+            // KikobaGroup::membersDuringCycle(). Falls back to today's active
+            // members only if this cycle has no start_date/end_date on record
+            // (both nullable columns) — the best available answer when
+            // there's no date range to anchor to.
+            $activeMembers = $groupFinancialYear->start_date && $groupFinancialYear->end_date
+                ? $group->membersDuringCycle($groupFinancialYear->start_date, $groupFinancialYear->end_date)->get()
+                : $group->activeMembers()->get();
 
             $summaries = KikobaMemberProductYearSummary::where('group_financial_year_id', $groupFinancialYear->id)->get();
 
@@ -72,7 +86,8 @@ class KikobaFinancialYearCloseReportService
             // Loan interest that's accrued/collected (per each product's
             // interest_recognition rule) but not yet locked into a prior
             // closure — see loanInterestData() for how "claimable" is derived.
-            [$loanProductsById, $loanInterestPools] = $this->loanInterestData($group);
+            [$loanProductsById, $loanInterestPools, , $applicantCutsByProduct, $applicantCutDetailsByProduct]
+                = $this->loanInterestData($group);
 
             $reports = collect();
 
@@ -102,9 +117,12 @@ class KikobaFinancialYearCloseReportService
                 [$loanProfitAmount, $loanBreakdown] = $this->calculateLoanInterestProfit(
                     $loanProductsById,
                     $loanInterestPools,
+                    $groupMember->id,
                     $totalShareUnits,
                     $totalShareUnitsInGroup,
-                    $activeMemberCount
+                    $activeMemberCount,
+                    $applicantCutsByProduct,
+                    $applicantCutDetailsByProduct
                 );
 
                 $profitAmount = $productProfitAmount + $loanProfitAmount;
@@ -247,6 +265,26 @@ class KikobaFinancialYearCloseReportService
     }
 
     /**
+     * Delete every draft report for this cycle, so generate() can be run
+     * again from a clean slate — e.g. after a bug fix changed who should be
+     * on the roster, where updateOrCreate()'s upsert would otherwise leave
+     * stale rows behind for members who no longer qualify. Refuses to touch
+     * a finalized cycle (same guard as generate()): finalize() has already
+     * claimed loan interest and locked these figures in, so they can only be
+     * reversed via unlock(), never silently wiped.
+     *
+     * @throws InvalidArgumentException when this cycle is already finalized
+     */
+    public function purge(KikobaGroupFinancialYear $groupFinancialYear): int
+    {
+        $this->assertNotFinalized($groupFinancialYear);
+
+        return KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
+            ->where('status', 'draft')
+            ->delete();
+    }
+
+    /**
      * Whether this cycle already has a locked-in (finalized) report — once
      * true, generate() refuses to recompute it and finalize() becomes a
      * no-op instead of re-locking.
@@ -276,8 +314,24 @@ class KikobaFinancialYearCloseReportService
      * interest_distribution rule, mirroring how product-income pools are
      * kept separate in generate().
      *
-     * @return array{0: Collection<int, \App\Models\KikobaLoanProduct>, 1: array<int, float>, 2: array<int, float>}
-     *         [loan products by id, pool amount by loan_product_id, claimable amount by loan_id]
+     * For a product using 'applicant_percentage', each loan's claimable
+     * interest is split right here, before pooling: applicant_interest_percentage
+     * of it is set aside for the loan's own applicant (kikoba_group_member_id)
+     * and only the remainder is added to the product's pool — so the pool
+     * still means "what gets split equally across every active member" the
+     * same as flat_rate, just smaller. A loan with no applicant on record
+     * falls back to pooling its full claimable amount, same as flat_rate,
+     * rather than silently losing that share to nobody.
+     *
+     * @return array{
+     *     0: Collection<int, \App\Models\KikobaLoanProduct>,
+     *     1: array<int, float>,
+     *     2: array<int, float>,
+     *     3: array<int, array<int, float>>,
+     *     4: array<int, array<int, array>>
+     * } [loan products by id, pool amount by loan_product_id, claimable
+     *    amount by loan_id, applicant bonus amount by [loan_product_id][kikoba_group_member_id],
+     *    applicant bonus loan detail by [loan_product_id][kikoba_group_member_id]]
      */
     protected function loanInterestData(KikobaGroup $group): array
     {
@@ -289,6 +343,8 @@ class KikobaFinancialYearCloseReportService
         $productsById = collect();
         $poolsByProduct = [];
         $claimableByLoan = [];
+        $applicantCutsByProduct = [];
+        $applicantCutDetailsByProduct = [];
 
         foreach ($loans as $loan) {
             $product = $loan->loanProduct;
@@ -304,11 +360,34 @@ class KikobaFinancialYearCloseReportService
             }
 
             $claimableByLoan[$loan->id] = $claimable;
-            $poolsByProduct[$product->id] = round(($poolsByProduct[$product->id] ?? 0) + $claimable, 2);
             $productsById->put($product->id, $product);
+
+            $memberId = $loan->kikoba_group_member_id;
+
+            if ($product->interest_distribution === 'applicant_percentage' && $memberId) {
+                $percentage = (float) ($product->applicant_interest_percentage ?? 0);
+                $applicantCut = round($claimable * ($percentage / 100), 2);
+                $poolContribution = round($claimable - $applicantCut, 2);
+
+                $applicantCutsByProduct[$product->id][$memberId] = round(
+                    ($applicantCutsByProduct[$product->id][$memberId] ?? 0) + $applicantCut,
+                    2
+                );
+                $applicantCutDetailsByProduct[$product->id][$memberId][] = [
+                    'loan_id' => $loan->id,
+                    'loan_number' => $loan->loan_number,
+                    'claimable_amount' => $claimable,
+                    'percentage' => $percentage,
+                    'amount' => $applicantCut,
+                ];
+
+                $poolsByProduct[$product->id] = round(($poolsByProduct[$product->id] ?? 0) + $poolContribution, 2);
+            } else {
+                $poolsByProduct[$product->id] = round(($poolsByProduct[$product->id] ?? 0) + $claimable, 2);
+            }
         }
 
-        return [$productsById, $poolsByProduct, $claimableByLoan];
+        return [$productsById, $poolsByProduct, $claimableByLoan, $applicantCutsByProduct, $applicantCutDetailsByProduct];
     }
 
     /**
@@ -355,29 +434,40 @@ class KikobaFinancialYearCloseReportService
 
     /**
      * Same distribution math as calculateProfit(), applied to loan-interest
-     * pools (grouped by loan product) instead of product-income pools.
+     * pools (grouped by loan product) instead of product-income pools, plus
+     * a third rule: 'applicant_percentage'. For that rule the pool already
+     * holds only the post-applicant-cut remainder (see loanInterestData()),
+     * so it's split equally across every active member exactly like
+     * flat_rate — and then this specific member's own applicant bonus (their
+     * direct cut as the borrower on one or more of this product's loans, 0
+     * if they weren't one) is added on top.
      *
      * @return array{0: float, 1: array} [profit amount, calculation breakdown]
      */
     protected function calculateLoanInterestProfit(
         Collection $loanProductsById,
         array $poolsByProduct,
+        int $memberId,
         int $memberShareUnits,
         int $totalShareUnitsInGroup,
-        int $activeMemberCount
+        int $activeMemberCount,
+        array $applicantCutsByProduct = [],
+        array $applicantCutDetailsByProduct = []
     ): array {
         $profitAmount = 0.0;
         $breakdown = [];
 
         foreach ($loanProductsById as $product) {
             $poolAmount = (float) ($poolsByProduct[$product->id] ?? 0);
+            $applicantBonus = (float) ($applicantCutsByProduct[$product->id][$memberId] ?? 0);
 
-            if ($poolAmount <= 0) {
+            if ($poolAmount <= 0 && $applicantBonus <= 0) {
                 continue;
             }
 
             $rule = $product->interest_distribution;
             $memberShare = 0.0;
+            $equalShare = 0.0;
 
             if ($rule === 'flat_rate') {
                 $memberShare = $activeMemberCount > 0
@@ -387,11 +477,16 @@ class KikobaFinancialYearCloseReportService
                 $memberShare = $totalShareUnitsInGroup > 0
                     ? $poolAmount * ($memberShareUnits / $totalShareUnitsInGroup)
                     : 0.0;
+            } elseif ($rule === 'applicant_percentage') {
+                $equalShare = $activeMemberCount > 0
+                    ? $poolAmount / $activeMemberCount
+                    : 0.0;
+                $memberShare = $equalShare + $applicantBonus;
             }
 
             $profitAmount += $memberShare;
 
-            $breakdown[] = [
+            $breakdownEntry = [
                 'source' => 'loan_interest',
                 'loan_product_id' => $product->id,
                 'product_name' => $product->name,
@@ -399,9 +494,18 @@ class KikobaFinancialYearCloseReportService
                 'pool_amount' => round($poolAmount, 2),
                 'total_share_units_in_group' => $rule === 'share_value' ? $totalShareUnitsInGroup : null,
                 'member_share_units' => $rule === 'share_value' ? $memberShareUnits : null,
-                'active_member_count' => $rule === 'flat_rate' ? $activeMemberCount : null,
+                'active_member_count' => in_array($rule, ['flat_rate', 'applicant_percentage'], true) ? $activeMemberCount : null,
                 'member_share' => round($memberShare, 2),
             ];
+
+            if ($rule === 'applicant_percentage') {
+                $breakdownEntry['applicant_interest_percentage'] = (float) $product->applicant_interest_percentage;
+                $breakdownEntry['equal_share_amount'] = round($equalShare, 2);
+                $breakdownEntry['applicant_bonus_amount'] = round($applicantBonus, 2);
+                $breakdownEntry['applicant_bonus_loans'] = $applicantCutDetailsByProduct[$product->id][$memberId] ?? [];
+            }
+
+            $breakdown[] = $breakdownEntry;
         }
 
         return [$profitAmount, $breakdown];

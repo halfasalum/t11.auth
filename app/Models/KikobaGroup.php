@@ -38,6 +38,30 @@ class KikobaGroup extends Model
         return $this->members()->where('status', 'active');
     }
 
+    /**
+     * Members who were part of this group at any point during a date range
+     * — by joined_date/exit_date overlap, not the member's status right
+     * now. Used for anything financial-year-related (payout close reports),
+     * where activeMembers()'s "current status" meaning is wrong: a member
+     * counts for a cycle if they joined on or before it ended AND didn't
+     * exit before it started — so someone who joined mid-cycle (e.g. the
+     * group's digital records only started partway through its nominal
+     * start_date) is still included, while someone who joined only after
+     * the cycle had already ended, or who'd already exited before it began,
+     * is not. status/exit_date aren't guaranteed to be kept in sync
+     * (exit_date can be left null even once status is no longer 'active'),
+     * so a null exit_date is treated as "still a member" rather than
+     * inferring anything from status.
+     */
+    public function membersDuringCycle($startDate, $endDate): HasMany
+    {
+        return $this->members()
+            ->where('joined_date', '<=', $endDate)
+            ->where(function ($query) use ($startDate) {
+                $query->whereNull('exit_date')->orWhere('exit_date', '>=', $startDate);
+            });
+    }
+
     public function groupProducts(): HasMany
     {
         return $this->hasMany(KikobaGroupProduct::class);

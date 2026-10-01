@@ -107,8 +107,9 @@ class KikobaLoanProductController extends BaseController
             'interest_rate' => 'nullable|required_if:interest_mode,percentage|numeric|min:0',
             'interest_amount' => 'nullable|required_if:interest_mode,fixed|numeric|min:0',
             'interest_application' => 'sometimes|in:add_on,deducted_upfront',
-            'interest_distribution' => 'sometimes|in:flat_rate,share_value',
+            'interest_distribution' => 'sometimes|in:flat_rate,share_value,applicant_percentage',
             'interest_recognition' => 'sometimes|in:on_disbursement,on_completion,cash_collected',
+            'applicant_interest_percentage' => 'nullable|required_if:interest_distribution,applicant_percentage|numeric|min:0|max:100',
 
             'min_loan_amount' => "{$req}|numeric|min:0",
             'max_loan_amount' => 'nullable|numeric|gte:min_loan_amount',
@@ -163,6 +164,12 @@ class KikobaLoanProductController extends BaseController
             $data['interest_rate'] = null;
         } elseif ($interestMode === 'percentage') {
             $data['interest_amount'] = null;
+        }
+
+        $interestDistribution = $data['interest_distribution'] ?? $product?->interest_distribution;
+
+        if ($interestDistribution !== 'applicant_percentage') {
+            $data['applicant_interest_percentage'] = null;
         }
 
         $penaltyType = $data['penalty_type'] ?? $product?->penalty_type;
