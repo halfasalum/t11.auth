@@ -18,9 +18,11 @@ class KikobaPayoutReportMail extends Mailable
         public string $financialYearName,
         public string $periodLabel,
         public float $totalSavingsAmount,
+        public int $totalShareUnits,
         public float $totalShareAmount,
         public float $profitAmount,
         public float $totalPayout,
+        public array $breakdown,
         public string $companyName,
         public ?string $companyPhone,
     ) {

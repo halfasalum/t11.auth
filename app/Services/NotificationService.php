@@ -269,16 +269,52 @@ class NotificationService
     }
 
     /**
-     * Send a Kikoba group's finalized payout-report figure to one member
+     * Send a Kikoba group's finalized payout-report figure to one member —
+     * itemized (savings + each income source's share) so the member can see
+     * for themselves how the total was arrived at, not just the final
+     * number. Zero-amount lines are left out to keep it from growing with
+     * every product a member merely wasn't involved in.
+     *
+     * @param array $breakdown Same per-source breakdown array the close
+     *   report stores (source, product_name, member_share, ...).
      */
-    public function sendKikobaPayoutSMS($member, string $groupName, string $financialYearName, float $totalPayout, $company)
-    {
-        $message = "Habari {$member->first_name},\n\n" .
-                   "Ripoti ya malipo ya mwisho ya kikundi {$groupName}" .
-                   ($financialYearName ? " ({$financialYearName})" : '') . " imekamilika.\n" .
-                   "Jumla ya malipo yako: TZS " . number_format($totalPayout, 0) . "\n\n" .
-                   "Wasiliana nasi kwa maelezo zaidi.\n" .
-                   "Asante, {$company->company_name}.";
+    public function sendKikobaPayoutSMS(
+        $member,
+        string $groupName,
+        string $financialYearName,
+        float $totalSavingsAmount,
+        array $breakdown,
+        float $totalPayout,
+        $company
+    ) {
+        $lines = [];
+        $lines[] = "Habari {$member->first_name}, malipo yako ya mwisho - {$groupName}" .
+                   ($financialYearName ? " ({$financialYearName})" : '') . ":";
+
+        if ($totalSavingsAmount > 0) {
+            $lines[] = "Akiba: TZS " . number_format($totalSavingsAmount, 0);
+        }
+
+        foreach ($breakdown as $entry) {
+            $amount = (float) ($entry['member_share'] ?? 0);
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $label = ($entry['source'] ?? '') === 'loan_interest' ? 'Riba' : 'Faida';
+            $productName = $entry['product_name'] ?? '';
+
+            $lines[] = "{$label} {$productName}: TZS " . number_format($amount, 0);
+        }
+
+        $lines[] = "Jumla: TZS " . number_format($totalPayout, 0);
+
+        if (! empty($company->company_phone)) {
+            $lines[] = "Maelezo: " . $company->company_phone;
+        }
+
+        $message = implode("\n", $lines);
 
         return $this->sendSMS($member->phone, $message, $company->company_name);
     }
