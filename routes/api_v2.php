@@ -576,6 +576,8 @@ Route::middleware([JwtMiddleware::class, CheckSubscriptionStatus::class])->group
         Route::get('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report', [KikobaReportController::class, 'closeReport']);
         Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/finalize', [KikobaReportController::class, 'finalizeCloseReport']);
         Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/unlock', [KikobaReportController::class, 'unlockCloseReport']);
+        Route::delete('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report', [KikobaReportController::class, 'purgeCloseReport']);
+        Route::post('groups/{groupId}/financial-years/{groupFinancialYearId}/close-report/notify', [KikobaReportController::class, 'notifyCloseReport']);
 
         // Member statement
         Route::get('groups/{groupId}/members/{groupMemberId}/statement', [KikobaReportController::class, 'memberStatement']);

@@ -269,6 +269,21 @@ class NotificationService
     }
 
     /**
+     * Send a Kikoba group's finalized payout-report figure to one member
+     */
+    public function sendKikobaPayoutSMS($member, string $groupName, string $financialYearName, float $totalPayout, $company)
+    {
+        $message = "Habari {$member->first_name},\n\n" .
+                   "Ripoti ya malipo ya mwisho ya kikundi {$groupName}" .
+                   ($financialYearName ? " ({$financialYearName})" : '') . " imekamilika.\n" .
+                   "Jumla ya malipo yako: TZS " . number_format($totalPayout, 0) . "\n\n" .
+                   "Wasiliana nasi kwa maelezo zaidi.\n" .
+                   "Asante, {$company->company_name}.";
+
+        return $this->sendSMS($member->phone, $message, $company->company_name);
+    }
+
+    /**
      * Send overdue payment notification
      */
     public function sendOverduePaymentSMS($customer, $schedule, $company)

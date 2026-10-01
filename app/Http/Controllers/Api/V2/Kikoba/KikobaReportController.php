@@ -14,6 +14,7 @@ use App\Models\KikobaMemberProductYearSummary;
 use App\Models\KikobaPenalty;
 use App\Services\Kikoba\KikobaFinancialYearCloseReportService;
 use App\Services\Kikoba\KikobaMemberProductSummaryService;
+use App\Services\Kikoba\KikobaPayoutNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +25,7 @@ class KikobaReportController extends BaseController
     public function __construct(
         protected KikobaMemberProductSummaryService $summaryService,
         protected KikobaFinancialYearCloseReportService $closeReportService,
+        protected KikobaPayoutNotificationService $payoutNotificationService,
     ) {
     }
 
@@ -160,6 +162,51 @@ class KikobaReportController extends BaseController
         $count = $this->closeReportService->unlock($groupFinancialYear, $this->getUserId());
 
         return $this->successResponse(['unlocked_count' => $count], 'Close reports unlocked successfully');
+    }
+
+    /**
+     * Delete this cycle's draft reports so they can be regenerated from
+     * scratch — e.g. after a correction that changes who should be on the
+     * roster or how figures are computed. Refuses on a finalized cycle;
+     * unlock it first.
+     */
+    public function purgeCloseReport(int $groupId, int $groupFinancialYearId)
+    {
+        $groupFinancialYear = $this->findGroupFinancialYear($groupId, $groupFinancialYearId);
+
+        if (! $groupFinancialYear) {
+            return $this->errorResponse('Financial year cycle not found', 404);
+        }
+
+        try {
+            $count = $this->closeReportService->purge($groupFinancialYear);
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
+
+        return $this->successResponse(['purged_count' => $count], 'Close reports purged successfully');
+    }
+
+    /**
+     * SMS + email every member of this cycle's finalized payout report
+     * their own figure, on whichever contact channel they have on file.
+     * Refuses on a cycle that isn't finalized yet.
+     */
+    public function notifyCloseReport(int $groupId, int $groupFinancialYearId)
+    {
+        $groupFinancialYear = $this->findGroupFinancialYear($groupId, $groupFinancialYearId);
+
+        if (! $groupFinancialYear) {
+            return $this->errorResponse('Financial year cycle not found', 404);
+        }
+
+        try {
+            $summary = $this->payoutNotificationService->notifyMembers($groupFinancialYear);
+        } catch (InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), 422);
+        }
+
+        return $this->successResponse($summary, 'Notifications sent');
     }
 
     // ---------------------------------------------------------------
