@@ -334,6 +334,7 @@ class KikobaGroupController extends BaseController
 
             $memberProducts = KikobaGroupMemberProduct::query()
                 ->whereHas('groupMember', fn($q) => $q->where('kikoba_group_id', $group->id)->where('status', 'active'))
+                ->whereHas('groupProduct', fn($q) => $q->where('status', 'active'))
                 ->where('status', 'active')
                 ->get();
 

@@ -99,6 +99,21 @@ class KikobaScheduleGeneratorService
             return collect();
         }
 
+        // A deactivated group product (kikoba_group_products.status) must
+        // never get new schedule rows, even if an old enrollment of it is
+        // still marked active — this is the one place every caller
+        // (starting a cycle, enrolling a member, regenerating future rows)
+        // funnels through, so the guard belongs here rather than repeated
+        // in each caller.
+        if ($groupProduct->status !== 'active') {
+            Log::info('Kikoba schedule generation skipped: group product is not active', [
+                'member_product_id' => $memberProduct->id,
+                'group_product_id'  => $groupProduct->id,
+                'group_product_status' => $groupProduct->status,
+            ]);
+            return collect();
+        }
+
         $product = $groupProduct->product;
 
         if (! $groupFinancialYear->start_date || ! $groupFinancialYear->end_date) {

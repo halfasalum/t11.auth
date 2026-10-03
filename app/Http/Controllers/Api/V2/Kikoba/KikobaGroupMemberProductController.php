@@ -61,6 +61,10 @@ class KikobaGroupMemberProductController extends BaseController
             return $this->errorResponse('This product is not assigned to the group', 404);
         }
 
+        if ($groupProduct->status !== 'active') {
+            return $this->errorResponse('This product has been deactivated for the group and cannot accept new enrollments', 422);
+        }
+
         if ($data['units'] < $groupProduct->effective_min_unit) {
             return $this->errorResponse("Units must be at least {$groupProduct->effective_min_unit}", 422);
         }
