@@ -84,6 +84,17 @@
             font-size: 11px;
             color: #666;
         }
+        .shares-box {
+            background: #fff8e1;
+            border-left: 3px solid #f9a825;
+            padding: 12px 15px;
+            margin-top: 20px;
+        }
+        .shares-box .note {
+            font-size: 11px;
+            color: #8a6d00;
+            margin-bottom: 8px;
+        }
         .footer {
             text-align: center;
             margin-top: 20px;
@@ -120,14 +131,6 @@
                 <tr>
                     <td>Akiba (Savings):</td>
                     <td>TZS {{ number_format($totalSavingsAmount, 0) }}</td>
-                </tr>
-                <tr>
-                    <td>Hisa (Share units):</td>
-                    <td>{{ number_format($totalShareUnits, 0) }}</td>
-                </tr>
-                <tr>
-                    <td>Thamani ya Hisa (Share amount):</td>
-                    <td>TZS {{ number_format($totalShareAmount, 0) }}</td>
                 </tr>
                 <tr>
                     <td>Faida (Profit):</td>
@@ -188,6 +191,36 @@
                         @endforeach
                     </tbody>
                 </table>
+            @endif
+
+            @if($totalShareAmount > 0 || $broughtForwardShareAmount > 0)
+                <div class="shares-box">
+                    <div class="note">
+                        ℹ️ Hisa ni mali unayomiliki, si fedha ulizolipwa — haziko ndani ya Jumla ya Malipo hapo juu.
+                    </div>
+                    <table>
+                        @if($totalShareAmount > 0)
+                            <tr>
+                                <td>Hisa Mwaka Huu{{ $financialYearName ? " ({$financialYearName})" : '' }}:</td>
+                                <td>{{ number_format($totalShareUnits, 0) }} units — TZS {{ number_format($totalShareAmount, 0) }}</td>
+                            </tr>
+                        @endif
+                        @if($broughtForwardShareAmount > 0)
+                            <tr>
+                                <td>Hisa Toka Miaka Iliyopita:</td>
+                                <td>{{ number_format($broughtForwardShareUnits, 0) }} units — TZS {{ number_format($broughtForwardShareAmount, 0) }}</td>
+                            </tr>
+                        @endif
+                        <tr>
+                            <td>Jumla ya Hisa Hadi Sasa:</td>
+                            <td>
+                                <strong>
+                                    {{ number_format($totalShareUnits + $broughtForwardShareUnits, 0) }} units — TZS {{ number_format($totalShareAmount + $broughtForwardShareAmount, 0) }}
+                                </strong>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
             @endif
 
             <p style="margin-top: 20px;">

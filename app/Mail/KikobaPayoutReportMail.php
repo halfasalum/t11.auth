@@ -20,6 +20,8 @@ class KikobaPayoutReportMail extends Mailable
         public float $totalSavingsAmount,
         public int $totalShareUnits,
         public float $totalShareAmount,
+        public int $broughtForwardShareUnits,
+        public float $broughtForwardShareAmount,
         public float $profitAmount,
         public float $totalPayout,
         public array $breakdown,

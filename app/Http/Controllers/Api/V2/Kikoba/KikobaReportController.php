@@ -117,12 +117,32 @@ class KikobaReportController extends BaseController
 
         $reports = $query->orderByDesc('total_payout')->get();
 
+        // Shares bought before this cycle started — a running balance the
+        // close-report row itself doesn't carry (its own total_share_* only
+        // covers contributions made during this cycle). Attached per row so
+        // the report page can show "this year" vs "brought forward" side by
+        // side, same split the payout notification sends.
+        $shareCarryForward = $groupFinancialYear->start_date
+            ? $this->closeReportService->shareCarryForwardByMember($groupFinancialYear->group, $groupFinancialYear->start_date)
+            : [];
+
+        $reports->each(function (KikobaFinancialYearCloseReport $report) use ($shareCarryForward) {
+            $carry = $shareCarryForward[$report->kikoba_group_member_id] ?? ['units' => 0, 'amount' => 0.0];
+            $report->setAttribute('brought_forward_share_units', $carry['units']);
+            $report->setAttribute('brought_forward_share_amount', $carry['amount']);
+            $report->setAttribute('total_share_units_to_date', $report->total_share_units + $carry['units']);
+            $report->setAttribute('total_share_amount_to_date', round($report->total_share_amount + $carry['amount'], 2));
+        });
+
         return $this->successResponse([
             'reports' => $reports,
             'totals' => [
                 'total_savings_amount' => round($reports->sum('total_savings_amount'), 2),
                 'total_profit_amount' => round($reports->sum('profit_amount'), 2),
                 'total_payout' => round($reports->sum('total_payout'), 2),
+                'total_share_amount' => round($reports->sum('total_share_amount'), 2),
+                'brought_forward_share_amount' => round($reports->sum('brought_forward_share_amount'), 2),
+                'total_share_amount_to_date' => round($reports->sum('total_share_amount_to_date'), 2),
             ],
             'is_finalized' => $this->closeReportService->isFinalized($groupFinancialYear),
         ]);

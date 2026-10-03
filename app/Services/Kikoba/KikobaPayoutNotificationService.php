@@ -53,6 +53,15 @@ class KikobaPayoutNotificationService
         $financialYearName = $groupFinancialYear->financialYear?->name ?? '';
         $periodLabel = $this->formatPeriod($groupFinancialYear);
 
+        // Shares bought in cycles before this one, carried forward — shares
+        // are a running balance (members keep what they already bought),
+        // never reset per cycle, so "shares collected this year" alone
+        // understates what a member actually holds. Not part of
+        // total_payout either way; purely informational context.
+        $shareCarryForward = $groupFinancialYear->start_date
+            ? $this->closeReportService->shareCarryForwardByMember($group, $groupFinancialYear->start_date)
+            : [];
+
         $reports = KikobaFinancialYearCloseReport::where('group_financial_year_id', $groupFinancialYear->id)
             ->where('status', 'finalized')
             ->with('groupMember.member')
@@ -86,6 +95,7 @@ class KikobaPayoutNotificationService
             }
 
             $hadContact = false;
+            $carry = $shareCarryForward[$report->kikoba_group_member_id] ?? ['units' => 0, 'amount' => 0.0];
 
             if (! empty($member->phone)) {
                 $hadContact = true;
@@ -97,6 +107,8 @@ class KikobaPayoutNotificationService
                     (float) $report->total_savings_amount,
                     $report->breakdown ?? [],
                     (float) $report->total_payout,
+                    (float) $report->total_share_amount,
+                    (float) $carry['amount'],
                     $company
                 );
 
@@ -116,6 +128,8 @@ class KikobaPayoutNotificationService
                         totalSavingsAmount: (float) $report->total_savings_amount,
                         totalShareUnits: (int) $report->total_share_units,
                         totalShareAmount: (float) $report->total_share_amount,
+                        broughtForwardShareUnits: (int) $carry['units'],
+                        broughtForwardShareAmount: (float) $carry['amount'],
                         profitAmount: (float) $report->profit_amount,
                         totalPayout: (float) $report->total_payout,
                         breakdown: $report->breakdown ?? [],

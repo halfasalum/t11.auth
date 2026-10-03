@@ -285,6 +285,50 @@ class KikobaFinancialYearCloseReportService
     }
 
     /**
+     * Every member's cumulative share units/amount from contributions made
+     * strictly before $beforeDate (typically a cycle's start) — one grouped
+     * query for the whole group, cost scales with contribution rows, not
+     * member count. Shares are a running balance: a contribution made in an
+     * earlier cycle is never "used up", so this is what a member already
+     * held coming into a cycle, on top of whatever they buy during it (the
+     * close report's own total_share_units/total_share_amount, which only
+     * cover contributions within the cycle itself). Used by both the
+     * payout-report page and the payout notification so they agree.
+     *
+     * @return array<int, array{units: int, amount: float}> keyed by
+     *   kikoba_group_member_id
+     */
+    public function shareCarryForwardByMember(KikobaGroup $group, $beforeDate): array
+    {
+        $rows = DB::table('kikoba_contributions as c')
+            ->join('kikoba_group_member_products as gmp', 'gmp.id', '=', 'c.group_member_product_id')
+            ->join('kikoba_group_members as gm', 'gm.id', '=', 'gmp.kikoba_group_member_id')
+            ->join('kikoba_group_products as gp', 'gp.id', '=', 'gmp.kikoba_group_product_id')
+            ->join('kikoba_products as p', 'p.id', '=', 'gp.kikoba_product_id')
+            ->where('gm.kikoba_group_id', $group->id)
+            ->where('p.product_type', 'share')
+            ->where('c.paid_date', '<', $beforeDate)
+            ->groupBy('gmp.kikoba_group_member_id')
+            ->select(
+                'gmp.kikoba_group_member_id as group_member_id',
+                DB::raw('SUM(c.units) as units'),
+                DB::raw('SUM(c.amount) as amount')
+            )
+            ->get();
+
+        $result = [];
+
+        foreach ($rows as $row) {
+            $result[$row->group_member_id] = [
+                'units' => (int) $row->units,
+                'amount' => (float) $row->amount,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
      * Whether this cycle already has a locked-in (finalized) report — once
      * true, generate() refuses to recompute it and finalize() becomes a
      * no-op instead of re-locking.

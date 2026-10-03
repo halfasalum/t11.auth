@@ -275,6 +275,12 @@ class NotificationService
      * number. Zero-amount lines are left out to keep it from growing with
      * every product a member merely wasn't involved in.
      *
+     * Shares are reported separately, after the Jumla (total) line, and are
+     * never added into it — a share is equity the member still holds, not
+     * cash paid out. $currentShareAmount is just this cycle's purchases;
+     * $broughtForwardShareAmount is everything bought in earlier cycles
+     * (shares are a running balance, never reset per cycle).
+     *
      * @param array $breakdown Same per-source breakdown array the close
      *   report stores (source, product_name, member_share, ...).
      */
@@ -285,6 +291,8 @@ class NotificationService
         float $totalSavingsAmount,
         array $breakdown,
         float $totalPayout,
+        float $currentShareAmount,
+        float $broughtForwardShareAmount,
         $company
     ) {
         $lines = [];
@@ -309,6 +317,23 @@ class NotificationService
         }
 
         $lines[] = "Jumla: TZS " . number_format($totalPayout, 0);
+
+        // Shares are informational only — kept out of Jumla above since
+        // they're not a cash payout, just reported here so the member can
+        // see what they hold.
+        if ($currentShareAmount > 0 || $broughtForwardShareAmount > 0) {
+            $lines[] = "--- Hisa (si sehemu ya malipo) ---";
+
+            if ($currentShareAmount > 0) {
+                $lines[] = "Hisa mwaka huu: TZS " . number_format($currentShareAmount, 0);
+            }
+
+            if ($broughtForwardShareAmount > 0) {
+                $lines[] = "Hisa toka miaka iliyopita: TZS " . number_format($broughtForwardShareAmount, 0);
+            }
+
+            $lines[] = "Jumla ya hisa: TZS " . number_format($currentShareAmount + $broughtForwardShareAmount, 0);
+        }
 
         if (! empty($company->company_phone)) {
             $lines[] = "Maelezo: " . $company->company_phone;
