@@ -166,7 +166,30 @@ class KikobaMemberController extends BaseController
             $query->where('status', $request->string('status'));
         }
 
-        $members = $query->orderByDesc('id')->paginate((int) $request->input('per_page', 20));
+        // Exclude members who are already an active member of this group —
+        // used by the "add member to group" picker so it only offers
+        // members who aren't already in it. A previously exited member
+        // (status no longer active, even if their old membership row is
+        // still on record) remains eligible to be re-added.
+        if ($request->filled('exclude_group')) {
+            $excludeGroupId = (int) $request->input('exclude_group');
+            $query->whereDoesntHave('groupMemberships', function ($q) use ($excludeGroupId) {
+                $q->where('kikoba_group_id', $excludeGroupId)->where('status', 'active');
+            });
+        }
+
+        $query->orderByDesc('id');
+
+        // Callers that just need the complete list for a picker/dropdown
+        // (not a paged table) pass all=1 to skip pagination entirely. A
+        // company's Kikoba member count is small enough for this to be
+        // safe, and a paginated page of 20 was silently hiding every
+        // member past page 1 from pickers that only ever fetched page 1.
+        if ($request->boolean('all')) {
+            return $this->successResponse($query->get());
+        }
+
+        $members = $query->paginate((int) $request->input('per_page', 20));
 
         return $this->successResponse($this->paginateResponse($members));
     }
