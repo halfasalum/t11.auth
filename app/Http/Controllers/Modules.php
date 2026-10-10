@@ -120,6 +120,7 @@ class Modules extends Controller
                     ->select('id', 'control_name')
                     ->get();
                 $modulesWithControls[] = [
+                    'id' => $module->id,
                     'module_name' => $module->module_name,
                     'controls' => $moduleControls
                 ];
