@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Schedule;
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote')->hourly(); */
 
-Schedule::command('app:check-company-subscription')->dailyAt('00:05')->runInBackground();
+ Schedule::command('app:check-company-subscription')->dailyAt('00:05')->runInBackground();
 Schedule::command('app:update-overdue-loans')->dailyAt('00:10')->runInBackground();
 Schedule::command('loans:handle-overdue-schedules')->dailyAt('00:15')->runInBackground();
 Schedule::command('loans:process-workflow')
@@ -22,9 +22,9 @@ Schedule::command('backup:database-email --compress')
     ->appendOutputTo(storage_path('logs/dbbackup.log'))
     ->runInBackground();
 
-Schedule::command('payments:process')->everyMinute()->runInBackground();
-Schedule::command('app:daily-report')->dailyAt('08:00')->appendOutputTo(storage_path('logs/daily-report.log'))->runInBackground();
+//Schedule::command('payments:process')->everyMinute()->runInBackground();
+//Schedule::command('app:daily-report')->dailyAt('08:00')->appendOutputTo(storage_path('logs/daily-report.log'))->runInBackground();
 Schedule::command('app:notify-subscription-expiry')
     ->dailyAt('08:00')
     ->appendOutputTo(storage_path('logs/subscription-expiry.log'))
-    ->runInBackground();
+    ->runInBackground(); 
